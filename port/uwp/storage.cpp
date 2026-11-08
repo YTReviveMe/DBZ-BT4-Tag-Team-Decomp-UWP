@@ -214,6 +214,8 @@ extern "C" int PortUwp_ApplyStorageEnvironment(void) {
 #endif
     const bool paths = set("BT3_DATA", data_path) && set("BT3_SAVES", save_path) &&
            set("BT3_SETTINGS", settings_path) &&
+           set("BT3_MODS", (std::filesystem::path(internal_path) / "mods").string()) &&
+           set("BT3_MODS_SETTINGS", (std::filesystem::path(internal_path) / "bt3_mods.txt").string()) &&
            set("BT4_CONTENT_ROOT", content_path) &&
            set("BT3_TEXTURES", texture_path.string()) &&
            set("BT3_STAGES", (std::filesystem::path(content_path) / "stages").string()) &&

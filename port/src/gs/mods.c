@@ -32,6 +32,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#ifdef BT3_UWP
+#include <SDL3/SDL.h>
+#endif
 #ifdef _WIN32
 #include <direct.h>
 #include <io.h>
@@ -93,6 +96,17 @@ void Mods_ReloadAsk(void) { sReload = 1; }
 const char *Mods_Folder(void) {
     const char *p = getenv("BT3_MODS");
     return p != NULL && p[0] != '\0' ? p : "mods";
+}
+
+static const char *bundled_source(void) {
+#ifdef BT3_UWP
+    static char path[1024];
+    const char *base = SDL_GetBasePath();
+    if (!base || snprintf(path, sizeof(path), "%stbo/bundled-mods", base) >= (int)sizeof(path)) return "";
+    return path;
+#else
+    return "tbo/bundled-mods";
+#endif
 }
 
 static const char *settings_path(void) {
@@ -1323,7 +1337,7 @@ static int load_one(const char *folder) {
     if (text == NULL) {
         return 0; /* (a folder without a script: not a script mod) */
     }
-    upgrade_bundled_text("tbo/bundled-mods", folder, &text, &size);
+    upgrade_bundled_text(bundled_source(), folder, &text, &size);
     m->table = m->game = LUA_NOREF;
     m->L = lua_newstate(mod_alloc, m);
     if (m->L == NULL) {
@@ -1388,14 +1402,29 @@ static void seed_bundled(const char *source, const char *destination) {
     for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         char *data;
         long size = 0;
+#ifndef BT3_UWP
         FILE *fp;
         int ok, descriptor;
+#endif
         if (snprintf(path, sizeof(path), "%s/%s/mod.lua", source, names[i]) >= (int)sizeof(path) ||
             snprintf(directory, sizeof(directory), "%s/%s", destination, names[i]) >= (int)sizeof(directory) ||
             snprintf(target, sizeof(target), "%s/mod.lua", directory) >= (int)sizeof(target)) continue;
         data = read_file(path, &size);
         if (data == NULL) continue;
-#ifdef _WIN32
+#ifdef BT3_UWP
+        {
+            SDL_PathInfo info;
+            SDL_IOStream *out = NULL;
+            if (!SDL_GetPathInfo(target, &info) && SDL_CreateDirectory(destination) &&
+                SDL_CreateDirectory(directory)) out = SDL_IOFromFile(target, "wb");
+            if (out != NULL) {
+                int ok = SDL_WriteIO(out, data, (size_t)size) == (size_t)size;
+                if (!SDL_CloseIO(out)) ok = 0;
+                if (!ok) SDL_RemovePath(target);
+                else say(-1, "installed bundled %s", names[i]);
+            }
+        }
+#elif defined(_WIN32)
         _mkdir(destination); _mkdir(directory);
         descriptor = _open(target, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
         fp = descriptor < 0 ? NULL : _fdopen(descriptor, "wb");
@@ -1406,6 +1435,7 @@ static void seed_bundled(const char *source, const char *destination) {
         fp = descriptor < 0 ? NULL : fdopen(descriptor, "wb");
         if (descriptor >= 0 && fp == NULL) { close(descriptor); remove(target); }
 #endif
+#ifndef BT3_UWP
         /* Exclusive creation keeps existing scripts, including empty ones. */
         if (fp != NULL) {
             ok = fwrite(data, 1, (size_t)size, fp) == (size_t)size;
@@ -1413,6 +1443,7 @@ static void seed_bundled(const char *source, const char *destination) {
             if (!ok) remove(target); /* Only the incomplete file this call created. */
             else say(-1, "installed bundled %s", names[i]);
         }
+#endif
         free(data);
     }
 }
@@ -1436,9 +1467,13 @@ static void load_all(void) {
     int n = 0, i;
 
     /* A custom mod directory is owned entirely by its caller. */
+#ifdef BT3_UWP
+    seed_bundled(bundled_source(), Mods_Folder());
+#else
     if (getenv("BT3_MODS") == NULL || getenv("BT3_MODS")[0] == '\0') {
         seed_bundled("tbo/bundled-mods", Mods_Folder());
     }
+#endif
     Mods_Lock();
     unload_all();
     sImgCount = 0; /* (the render thread lets its pictures go: Mods_ImageGen) */
