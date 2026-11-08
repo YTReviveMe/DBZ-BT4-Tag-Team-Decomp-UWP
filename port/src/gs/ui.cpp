@@ -13,13 +13,15 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
 #include "imgui_impl_opengl3.h"
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
 #include "imgui_impl_dx9.h"
 static void *sD3D9;
 extern "C" void *GsDx9_StripTexture(const void *, int, int);
 extern "C" void GsDx9_StripTextureFree(void *);
 #endif
+#ifndef BT3_UWP
 extern "C" int GsGl_DirectXVersion(void);
+#endif
 #include "ui.h"
 #include "presentation.h"
 #include "namefont.h"
@@ -153,13 +155,12 @@ static SDL_GPUDevice *sDevice;
 
 static int f1_language(void) {
     char saved[16];
-    if(sF1Language==-2)return Port_GameProfileLanguage();
     if (sF1Language >= 0) return sF1Language;
     Port_SettingText("f1_language", "", saved, sizeof(saved));
     if (!strcmp(saved, "es")) sF1Language = 0;
     else if (!strcmp(saved, "en")) sF1Language = 1;
     else if (!strcmp(saved, "pt")) sF1Language = 2;
-    else {sF1Language=-2;return Port_GameProfileLanguage();}
+    else sF1Language = 1;
     return sF1Language;
 }
 
@@ -193,6 +194,7 @@ static const char *f1_text(const char *english) {
         {"English", "Inglés", "Inglês"},
         {"Portuguese", "Portugués", "Português"},
         {"Language saved for the next launch.", "Idioma guardado para el próximo inicio.", "Idioma salvo para a próxima inicialização."},
+        {"English game text and voices require a compatible English BT4 B14 Rev2 ISO to be installed.", "Los textos y voces del juego en inglés requieren instalar una ISO inglesa compatible de BT4 B14 Rev2.", "Textos e vozes do jogo em inglês exigem a instalação de uma ISO inglesa compatível de BT4 B14 Rev2."},
         {"Full disc profile: text and voices. Install each ISO once using the launcher. The startup selector confirms your choice before the game begins.", "Perfil completo del disco: textos y voces. Instala cada ISO una vez con el instalador. El selector inicial confirma tu elección antes de empezar.", "Perfil completo do disco: textos e vozes. Instale cada ISO uma vez pelo instalador. A seleção inicial confirma a escolha antes do jogo começar."},
         {"Menu font", "Fuente de los menús", "Fonte dos menus"},
         {"Battle font", "Fuente de combate", "Fonte de batalha"},
@@ -645,17 +647,19 @@ static SDL_GPUTexture *make_strip(uint8_t *pix, size_t bytes, uint32_t w, uint32
     SDL_GPUTexture *tex;
     void *map;
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
     if (sD3D9) {
         void *texture = GsDx9_StripTexture(pix, w, h * count);
         free(pix); return (SDL_GPUTexture *)texture;
     }
 #endif
+#ifndef BT3_UWP
     if (sGL) { // the OpenGL back end: a GL texture, its name carried in the pointer (ImGui's OpenGL3 backend takes it so)
         unsigned id = GsGl_StripTexture(pix, (int)w, (int)(h * count));
         free(pix);
         return (SDL_GPUTexture *)(intptr_t)id;
     }
+#endif
     SDL_zero(ci);
     ci.type = SDL_GPU_TEXTURETYPE_2D;
     ci.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -786,14 +790,18 @@ void Ui_TextureFree(SDL_GPUTexture *tex) {
     if (tex == NULL) {
         return;
     }
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
     if (sD3D9) { GsDx9_StripTextureFree(tex); return; }
 #endif
+#ifdef BT3_UWP
+    SDL_ReleaseGPUTexture(sDevice, tex);
+#else
     if (sGL) {
         GsGl_StripTextureFree((unsigned)(intptr_t)tex);
     } else {
         SDL_ReleaseGPUTexture(sDevice, tex);
     }
+#endif
 }
 ImFont *Ui_FontBold(void) { return sFontBold; }
 bool FightPanels_Draw(ImDrawList *dl, float lx, float rx, float y0, float y1, float bar, float trim);
@@ -1046,16 +1054,20 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const c
             pf.font = panel_font_load(pf.choice);
         }
     }
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
     if (sD3D9) {
         if (!ImGui_ImplSDL3_InitForD3D(window) || !ImGui_ImplDX9_Init((IDirect3DDevice9 *)sD3D9)) { return 0; }
     } else
 #endif
     if (device == NULL) { // the OpenGL back end (gs_gl.c), with its context current
+#ifdef BT3_UWP
+        return 0;
+#else
         sGL = 1;
         if (!ImGui_ImplSDL3_InitForOpenGL(window, (SDL_GLContext)gl_context) || !ImGui_ImplOpenGL3_Init(GsGl_DirectXVersion() ? "#version 300 es" : "#version 330 core")) {
             return 0;
         }
+#endif
     } else {
         if (!ImGui_ImplSDL3_InitForSDLGPU(window)) {
             return 0;
@@ -1096,7 +1108,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const c
 }
 
 int Ui_InitD3D9(SDL_Window *window, void *device, const char *gpu_name) {
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
     sD3D9 = device;
     int ok = Ui_Init(window, NULL, NULL, gpu_name);
     if (!ok) {
@@ -1113,7 +1125,7 @@ int Ui_InitD3D9(SDL_Window *window, void *device, const char *gpu_name) {
 #endif
 }
 void Ui_D3D9Reset(int create) {
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
     if (!sD3D9) { return; }
     if (create) { ImGui_ImplDX9_CreateDeviceObjects(); }
     else { ImGui_ImplDX9_InvalidateDeviceObjects(); }
@@ -2533,6 +2545,8 @@ static void ui_tab(PortVideo &v) {
         }
         ImGui::EndDisabled();
         ImGui::SetItemTooltip(f1_text("Full disc profile: text and voices. Install each ISO once using the launcher. The startup selector confirms your choice before the game begins."));
+        if (!Port_GameProfileAvailable(1))
+            ImGui::TextWrapped("%s", f1_text("English game text and voices require a compatible English BT4 B14 Rev2 ISO to be installed."));
         if (choice != Port_GameProfileLanguage()) ImGui::TextWrapped("%s", f1_text("Language saved for the next launch."));
         ImGui::Separator();
     }
@@ -3613,12 +3627,14 @@ static bool frame_build(void) {
         ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     }
     sBuilt = true;
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
     if (sD3D9) { ImGui_ImplDX9_NewFrame(); }
     else
 #endif
     if (sGL) {
+#ifndef BT3_UWP
         ImGui_ImplOpenGL3_NewFrame();
+#endif
     } else {
         ImGui_ImplSDLGPU3_NewFrame();
     }
@@ -3768,7 +3784,7 @@ static bool frame_build(void) {
 }
 
 void Ui_DrawD3D9(void) {
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
     if (sD3D9 && frame_build()) { ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData()); }
 #endif
 }
@@ -3780,7 +3796,9 @@ void Ui_Draw(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target) {
 
 // The OpenGL back end's turn: over the presented picture, just before the buffers are swapped.
 void Ui_DrawGL(void) {
+#ifndef BT3_UWP
     if (sGL && frame_build()) {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
+#endif
 }

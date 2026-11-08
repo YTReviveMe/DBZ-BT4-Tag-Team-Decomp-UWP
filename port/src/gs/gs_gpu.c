@@ -29,6 +29,12 @@
 static int sUseDxil;
 #endif
 #include "ui.h"
+#ifdef BT3_UWP
+extern void PortUwp_Trace(const char *message);
+#define BT4_GPU_STAGE(message) PortUwp_Trace(message)
+#else
+#define BT4_GPU_STAGE(message) ((void)0)
+#endif
 
 extern int Port_Setting(const char *name, int def); /* plat_settings.c: the saved settings */
 extern int Port_AspectMilli(void);
@@ -748,8 +754,10 @@ static int gpu_init(const char *driver) {
     const char *gpuName = NULL;
     int i;
 
+    BT4_GPU_STAGE("BT4 GPU: initializing video");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "bt3: SDL_Init: %s\n", SDL_GetError());
+        BT4_GPU_STAGE(SDL_GetError());
         return 0;
     }
 #ifdef _WIN32
@@ -758,8 +766,10 @@ static int gpu_init(const char *driver) {
     sDev = SDL_CreateGPUDevice(SHADER_FORMAT, getenv("BT3_GPU_DEBUG") != NULL, driver);
     if (!sDev) {
         fprintf(stderr, "bt3: %s device: %s\n", driver, SDL_GetError());
+        BT4_GPU_STAGE(SDL_GetError());
         return 0;
     }
+    BT4_GPU_STAGE("BT4 GPU: device ready, creating window");
     sShadowStencil = sDev != NULL && SDL_GPUTextureSupportsFormat(sDev, SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
         SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER);
     sDepthFormat = sShadowStencil ? SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT : SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
@@ -769,8 +779,10 @@ static int gpu_init(const char *driver) {
     sWindow = GsDraw_WindowCreate(0);
     if (sWindow == NULL || !SDL_ClaimWindowForGPUDevice(sDev, sWindow)) {
         fprintf(stderr, "bt3: no GPU window: %s\n", SDL_GetError());
+        BT4_GPU_STAGE(SDL_GetError());
         goto fail;
     }
+    BT4_GPU_STAGE("BT4 GPU: game window claimed");
     /* The game paces itself at 30 frames per second; waiting for the display's own refresh on top of that
        (VSYNC) costs up to a refresh period per frame. Prefer MAILBOX (no tearing, no wait), then IMMEDIATE. */
     vsync_apply(Port_Setting("vsync", 0)); /* (the setting "V-sync" asks for the wait all the same) */

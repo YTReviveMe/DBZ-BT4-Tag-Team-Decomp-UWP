@@ -26,6 +26,9 @@
 #include <string.h>
 #ifdef _WIN32
 #include <windows.h>
+#ifdef BT3_UWP
+#undef small
+#endif
 #else
 #include <unistd.h>
 #endif
@@ -35,6 +38,9 @@
 #include "../port_addr.h"
 
 extern void Port_HeapRegion(uint8_t **base, uint32_t *size); /* plat_mem.c */
+#ifdef BT3_UWP
+extern void PortUwp_Trace(const char *message);
+#endif
 
 int gPortResim; /* gs_internal.h: frames are being re-run, without picture or sound */
 
@@ -60,11 +66,17 @@ static void regions_init(void) {
     sRegions = 0;
     if (n > 0 && n < (long)sizeof(exe) - 1) {
         unsigned long long a, size;
+#ifdef BT3_UWP
+        const uintptr_t image_base = (uintptr_t)GetModuleHandleW(NULL);
+#endif
         exe[n] = '\0';
         snprintf(path, sizeof(path), "%s.mem", exe);
         fp = fopen(path, "r");
         if (fp == NULL) {
             fprintf(stderr, "bt3: state: %s is missing (written by port/tools/make_state.py at link time)\n", path);
+#ifdef BT3_UWP
+            PortUwp_Trace("BT4 state map: packaged .mem file could not be opened");
+#endif
         } else {
             /* The list's first two lines say which program it was made for: "0 <address of gPortResim>" and
                "1 <address of gPortVBlanks>" there. A list of another release (seen on Windows: a new .exe put
@@ -76,6 +88,9 @@ static void regions_init(void) {
                 if (a < 2) {
 #ifdef __APPLE__ /* (the list holds game addresses: offsets in the window, port_addr.h) */
                     marks += size == Port_Addr(a == 0 ? (const void *)&gPortResim : (const void *)&gPortVBlanks);
+#elif defined(BT3_UWP)
+                    marks += image_base + (uintptr_t)size ==
+                        (a == 0 ? (uintptr_t)&gPortResim : (uintptr_t)&gPortVBlanks);
 #else
                     marks += (uintptr_t)size == (a == 0 ? (uintptr_t)&gPortResim : (uintptr_t)&gPortVBlanks);
 #endif
@@ -83,6 +98,8 @@ static void regions_init(void) {
                 }
 #ifdef __APPLE__
                 sRegion[sRegions].p = (const uint8_t *)Port_Ptr((uint32_t)a);
+#elif defined(BT3_UWP)
+                sRegion[sRegions].p = (const uint8_t *)(image_base + (uintptr_t)a);
 #else
                 sRegion[sRegions].p = (const uint8_t *)(uintptr_t)a;
 #endif
@@ -93,6 +110,9 @@ static void regions_init(void) {
             fclose(fp);
             if (marks != 2) {
                 extern void Port_UiNotice(const char *text);
+#ifdef BT3_UWP
+                PortUwp_Trace("BT4 state map: package markers do not match this executable");
+#endif
                 fprintf(stderr, "bt3: state: %s is not this program's (it is from another release). Online play starts the slow way and "
                                 "without rollback. Copy ALL the files of a release, not only the program.\n", path);
                 Port_UiNotice("Files of two different releases are mixed: copy all the files of the release, not only the program.");

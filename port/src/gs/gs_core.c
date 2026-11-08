@@ -1496,6 +1496,11 @@ static const char *gs_mode(void) {
 }
 
 static int render_thread_wanted(void) {
+#ifdef BT3_UWP
+    /* WinRT video/window creation must run on the app's game thread. Waiting
+       for a worker to initialize SDL video leaves the Xbox splash visible. */
+    return 0;
+#else
     extern int Port_Setting(const char *name, int def);
     extern int SDL_GetNumLogicalCPUCores(void);
     const char *e = getenv("BT3_GS_THREAD");
@@ -1509,6 +1514,7 @@ static int render_thread_wanted(void) {
         want = 0;
     }
     return want;
+#endif
 }
 
 static int gs_on(void) {

@@ -11,8 +11,9 @@ NAMES=('gs.vert','gs.frag','gsnz.frag','gswb.frag','vu0.vert','vu4.vert',
        'vu6.vert','fx.vert','outline.frag','alphakey.frag','dclut.frag')
 
 def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+def text_digest(p): return hashlib.sha256(p.read_bytes().replace(b'\r\n',b'\n')).hexdigest()
 def inputs(root):
-    return {p.name:digest(p) for p in sorted((root/'port/src/gs/shaders').glob('*.*'))
+    return {p.name:text_digest(p) for p in sorted((root/'port/src/gs/shaders').glob('*.*'))
             if p.suffix in ('.vert','.frag')}
 
 def generate(root,gen,header,manifest):
@@ -80,7 +81,9 @@ def generate(root,gen,header,manifest):
             for sampler,slot in slots.items():text=text.replace('uniform sampler2D '+sampler+';','uniform sampler2D '+sampler+' : register(s'+str(slot)+');')
             hlsl.write_text(text);data=text.encode();code=c.c_void_p();errors=c.c_void_p()
             hr=compile(data,len(data),name.encode(),None,None,b'main',b'vs_3_0' if vertex else b'ps_3_0',1<<15,0,c.byref(code),c.byref(errors))
-            if errors:row['diagnostics']=blob_bytes(errors).decode(errors='replace')
+            if errors:
+                diagnostics=blob_bytes(errors).decode(errors='replace')
+                if hr<0:row['diagnostics']=diagnostics
             if hr<0:row['error']='D3DCompile HRESULT '+hex(hr&0xffffffff)
             else:
                 binary=blob_bytes(code);(out/(name+'.bin')).write_bytes(binary)
@@ -99,7 +102,7 @@ def generate(root,gen,header,manifest):
                      '\nstruct ShaderBlob { const char *name; const DWORD *code; bool vertex; };\n'+
                      'static const ShaderBlob kShaders[] = {'+','.join(entries)+'};\n')
     manifest.write_text(json.dumps(dict(source_sha256=inputs(root),
-        generator_sha256=digest(Path(__file__)),header_sha256=digest(header),
+        generator_sha256=text_digest(Path(__file__)),header_sha256=digest(header),
         spv_sha256={n:digest(gen/(n+'.spv')) for n in NAMES},shaders=records),indent=2)+'\n')
 
 def prepare(root,gen,windows,regenerate=False):
@@ -110,7 +113,7 @@ def prepare(root,gen,windows,regenerate=False):
         raise RuntimeError('Missing SM3 shaders. Run port/tools/d3d9_shaders.py --generate')
     row=json.loads(manifest.read_text())
     if (row['source_sha256']!=inputs(root) or row['header_sha256']!=digest(header) or
-        row['generator_sha256']!=digest(Path(__file__)) or
+        row['generator_sha256']!=text_digest(Path(__file__)) or
         row['spv_sha256']!={n:digest(gen/(n+'.spv')) for n in NAMES}):
         raise RuntimeError('Stale SM3 shaders. Run port/tools/d3d9_shaders.py --generate')
 

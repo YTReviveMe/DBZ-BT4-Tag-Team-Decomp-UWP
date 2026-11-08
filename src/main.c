@@ -4,6 +4,13 @@
 #include "sys/file.h"
 #include "sys/dma.h"
 
+#ifdef BT3_UWP
+extern void PortUwp_Trace(const char *message);
+#define BT4_BOOT_STAGE(message) PortUwp_Trace(message)
+#else
+#define BT4_BOOT_STAGE(message) ((void)0)
+#endif
+
 /* Sony kernel / libkernl */
 extern s32 GetThreadId(void);
 extern s32 ChangeThreadPriority(s32 tid, s32 prio);
@@ -129,17 +136,22 @@ void Sys_LoadIopModules(void) {
 
 /* Initialises every subsystem in order, then alternates forever between the menu overlay and a battle. */
 void Game_Main(void) {
+    BT4_BOOT_STAGE("BT4 game: initializing IOP services");
     Sys_RebootIop();
     Sys_LoadIopModules();
     ChangeThreadPriority(GetThreadId(), 2);
+    BT4_BOOT_STAGE("BT4 game: initializing heap and graphics");
     Heap_Init();
     Gfx_Init();
+    BT4_BOOT_STAGE("BT4 game: initializing sound and files");
     Snd_Init();
     File_Init();
     Movie_Init();
+    BT4_BOOT_STAGE("BT4 game: loading common data");
     Common_Init();
     Common_LoadBoot();
     Common_Reload();
+    BT4_BOOT_STAGE("BT4 game: initializing menus and input");
     Progress_Init();
     Save_Init();
     Job_Init();
@@ -152,8 +164,10 @@ void Game_Main(void) {
     FontIcon_Init();
     Fade_Init();
     PadWatch_Init();
+    BT4_BOOT_STAGE("BT4 game: opening menu overlay");
     for (;;) {
         Overlay_Load(0);
+        BT4_BOOT_STAGE("BT4 game: menu overlay ready");
         Progress_Main(0);
         Battle_Main(0);
     }

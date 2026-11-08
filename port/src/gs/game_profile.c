@@ -26,7 +26,7 @@ static char sRoots[2][1600],sError[192],sPortuguese[1800];
 /* Conversion is a separate low-priority hidden process. Starting a room never
  * scans or converts the music library; missing cache entries use original ADX. */
 static void music_prepare(void){
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
     char complete[128],tool[1800],command[4000];WCHAR wideTool[1800],wideCommand[4000];
     FILE *f;const char *base=SDL_GetBasePath();STARTUPINFOW si;PROCESS_INFORMATION pi;
     if(getenv("BT4_RENDER_TEST")||getenv("BT3_NOSOUND")||getenv("BT4_MUSIC_NO_CACHE"))return;
@@ -88,13 +88,15 @@ void Port_GameProfileInit(void){
         nested languages/ directory during the self-test. */
      if(sExternal)mask|=1<<installed;
      for(i=0;i<2;++i)if(!(mask&(1<<i)))sReady[i]=0;}
-    Port_SettingText("game_language",installed?"en":"es",saved,sizeof(saved));
+    Port_SettingText("game_language","en",saved,sizeof(saved));
     sLanguage=!strcmp(saved,"pt-BR")?2:!strcmp(saved,"en");
     {char pending[1800],value[16]={0};FILE *f;
      SDL_snprintf(pending,sizeof(pending),"%stbo/setup/selected-game-language",base?base:"");
      f=fopen(pending,"rb");if(f){fgets(value,sizeof(value),f);fclose(f);
        if(!strcmp(value,"pt-BR")&&sReady[2]){sLanguage=2;Port_SettingTextSave("game_language","pt-BR");Port_SettingsWrite();remove(pending);}}}
+#ifndef BT3_UWP
     if(sExternal)sLanguage=installed;
+#endif
     if(!sReady[sLanguage])sLanguage=sReady[installed]?installed:!installed;
     sEnglish=sLanguage!=0;
     if(sLanguage!=2&&!sReady[sEnglish])sEnglish=sReady[installed]?installed:!installed;
@@ -105,7 +107,9 @@ void Port_GameProfileInit(void){
         SDL_snprintf(path,sizeof(path),"%s/game-text",sPortuguese);profile_env_set("BT3_MENU_FONT",path);
         profile_env_set("BT3_MENU_LANG","pt-BR");
     }else profile_env_set("BT4_PTBR_ROOT",NULL);
+#ifndef BT3_UWP
     if(!getenv("BT3_MENU_LANG"))profile_env_set("BT3_MENU_LANG","en");
+#endif
     fprintf(stderr,"bt4: game profile=%s data=%s\n",sEnglish?"English":"Spanish",sRoots[sEnglish]);
     music_prepare();
 }

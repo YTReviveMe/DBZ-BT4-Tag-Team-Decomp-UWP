@@ -1,5 +1,11 @@
 #include "common.h"
 #include "menu/menu_a.h"
+#ifdef BT3_UWP
+extern void PortUwp_Trace(const char *message);
+#define BT4_MENU_STAGE(message) PortUwp_Trace(message)
+#else
+#define BT4_MENU_STAGE(message) ((void)0)
+#endif
 
 /* The menu archives, one per group of modes (overlay .data, 0x3B0E84..0x3B0EB8); see menu_a.h. */
 void *gMenuArc0 = NULL;
@@ -64,9 +70,12 @@ s32 Progress_Main(s32 arg) {
     s32 reason;
     s32 ret;
 
+    BT4_MENU_STAGE("BT4 menu: real Progress_Main entered");
     Pad_SetRepeat(0x28, 3);
     if (gProgress->flags & MPROG_FIRST_RUN) {
+        BT4_MENU_STAGE("BT4 menu: first-run sequence");
         FirstRun_Main();
+        BT4_MENU_STAGE("BT4 menu: first-run sequence done");
         gProgress->flags &= ~MPROG_FIRST_RUN;
     }
     flags = BattleResult_GetFlags();
@@ -122,7 +131,9 @@ s32 Progress_Main(s32 arg) {
             gMenuArc1 = File_LoadSync(gProgress->baseFile + 1, NULL, 0);
         }
     }
+    BT4_MENU_STAGE("BT4 menu: loading sound bank");
     Snd_LoadBankFile(2, 0x14C);
+    BT4_MENU_STAGE("BT4 menu: dispatching first screen");
 
     do {
         switch (gProgress->mode) {

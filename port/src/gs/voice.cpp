@@ -20,7 +20,7 @@
 #include "voice_transport_curl.inc"
 #endif
 using VJson=nlohmann::json;
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
 #include "voice_audio.inc"
 #else
 #include "voice_audio_sdl.inc"

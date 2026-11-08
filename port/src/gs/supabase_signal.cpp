@@ -23,6 +23,9 @@
 #include "online_route.h"
 #include <ctime>
 #include "voice_platform.inc"
+#ifdef BT3_UWP
+#include <fileapifromapp.h>
+#endif
 #define JSON_NOEXCEPTION
 #include "../../third_party/voice/json.hpp"
 #ifdef _WIN32
@@ -73,7 +76,12 @@ static bool identitySlot(){
     std::string projectRef=endpoint().host;projectRef=projectRef.substr(0,projectRef.find('.'));
     for(int slot=0;slot<16;++slot){std::string file=folder+"/"+projectRef+"-"+std::to_string(slot);
 #ifdef _WIN32
-        auto wide=pathWide(file+".lock");identity.lock=CreateFileW(wide.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+        auto wide=pathWide(file+".lock");
+#ifdef BT3_UWP
+        identity.lock=CreateFileFromAppW(wide.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+#else
+        identity.lock=CreateFileW(wide.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+#endif
         if(identity.lock==INVALID_HANDLE_VALUE)continue;
 #else
         identity.lock=open((file+".lock").c_str(),O_RDWR|O_CREAT,0600);if(identity.lock<0)continue;
@@ -91,7 +99,13 @@ static void saveIdentity(){
     std::string temp=identity.file+".tmp",data=Sj{{"refresh_token",identity.refresh}}.dump();
     auto out=SDL_IOFromFile(temp.c_str(),"wb");if(!out)return;bool good=SDL_WriteIO(out,data.data(),data.size())==data.size();good=SDL_CloseIO(out)&&good;if(!good)return;
 #ifdef _WIN32
-    auto a=pathWide(temp),b=pathWide(identity.file);MoveFileExW(a.c_str(),b.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
+    auto a=pathWide(temp),b=pathWide(identity.file);
+#ifdef BT3_UWP
+    if(!ReplaceFileFromAppW(b.c_str(),a.c_str(),nullptr,REPLACEFILE_IGNORE_MERGE_ERRORS,nullptr,nullptr))
+        MoveFileFromAppW(a.c_str(),b.c_str());
+#else
+    MoveFileExW(a.c_str(),b.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
+#endif
 #else
     chmod(temp.c_str(),0600);rename(temp.c_str(),identity.file.c_str());
 #endif
@@ -199,11 +213,17 @@ static int entry(void*){
         auto folder=sessionFolder();if(folder.empty()||!SDL_CreateDirectory(folder.c_str()))return;
         auto path=folder+"/online-route.json",temp=path+"."+std::to_string(SDL_GetTicksNS())+".tmp";
         auto f=SDL_IOFromFile(temp.c_str(),"wb");if(!f)return;bool ok=SDL_WriteIO(f,data.data(),data.size())==data.size();ok=SDL_CloseIO(f)&&ok;
-        if(!ok){remove(temp.c_str());return;}
+        if(!ok){SDL_RemovePath(temp.c_str());return;}
 #ifdef _WIN32
-        auto a=pathWide(temp),b=pathWide(path);if(!MoveFileExW(a.c_str(),b.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))remove(temp.c_str());
+        auto a=pathWide(temp),b=pathWide(path);
+#ifdef BT3_UWP
+        if(!ReplaceFileFromAppW(b.c_str(),a.c_str(),nullptr,REPLACEFILE_IGNORE_MERGE_ERRORS,nullptr,nullptr)&&
+           !MoveFileFromAppW(a.c_str(),b.c_str()))SDL_RemovePath(temp.c_str());
 #else
-        chmod(temp.c_str(),0600);if(rename(temp.c_str(),path.c_str()))remove(temp.c_str());
+        if(!MoveFileExW(a.c_str(),b.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))SDL_RemovePath(temp.c_str());
+#endif
+#else
+        chmod(temp.c_str(),0600);if(rename(temp.c_str(),path.c_str()))SDL_RemovePath(temp.c_str());
 #endif
     };
     {bt4route::Policy cached;auto data=readCache();if(bt4route::decode<Sj>(data,(uint64_t)time(nullptr),policy,cached)){

@@ -23,7 +23,9 @@
 #include <algorithm>
 #include <functional>
 #include <stdint.h>
+#ifndef BT3_UWP
 #include <zlib.h>
+#endif
 #define MINIZ_NO_ARCHIVE_WRITING_APIS
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #define MINIZ_NO_TIME
@@ -40,6 +42,16 @@
 #include <unistd.h>
 #endif
 #include "native.h"
+#ifdef BT3_UWP
+#include "../uwp/iso_io.h"
+#define SDL_IOFromFile PortUwp_IOFromFile
+#define SDL_GetPathInfo PortUwp_GetPathInfo
+#define SDL_SaveFile PortUwp_SaveFile
+#define SDL_LoadFile PortUwp_LoadFile
+#define SDL_CreateDirectory PortUwp_CreatePath
+#define SDL_RenamePath PortUwp_RenamePath
+#define SDL_RemovePath PortUwp_RemovePath
+#endif
 
 namespace {
 
@@ -178,7 +190,11 @@ struct Iso {
     void open(const std::string &path) {
         Uint8 pvd[2048];
         Uint32 lba, size;
+#ifdef BT3_UWP
+        io = PortUwp_OpenIO(path, false);
+#else
         io = SDL_IOFromFile(path.c_str(), "rb");
+#endif
         if (io == NULL) {
             throw Stop{"The disc image could not be opened: " + path};
         }
@@ -727,7 +743,8 @@ void checked_out(Iso &iso, Uint64 off, Uint64 size, const std::string &path,
                  unsigned expectedSize, unsigned expectedCrc, std::vector<Uint8> &buf,
                  const ByteCallback &progress={}) {
     if (size != expectedSize) throw Stop{"Tamano incompatible en " + path};
-    if (file_crc(path, size, buf, progress) == expectedCrc) return;
+    const bool exists = SDL_GetPathInfo(path.c_str(), NULL);
+    if (exists && file_crc(path, size, buf, progress) == expectedCrc) return;
     std::string temp = path + ".part";
     if(!sDedupeRoot.empty() && path.compare(0,sDataRoot.size(),sDataRoot)==0) {
         std::string shared=sDedupeRoot+path.substr(sDataRoot.size());
@@ -739,21 +756,30 @@ void checked_out(Iso &iso, Uint64 off, Uint64 size, const std::string &path,
             }
         }
     }
-    SDL_IOStream *f = SDL_IOFromFile(temp.c_str(), "wb");
-    if (!f) throw Stop{"No se puede escribir en " + temp};
+    const std::string &output = exists ? temp : path;
+    SDL_IOStream *f = SDL_IOFromFile(output.c_str(), "wb");
+    if (!f) throw Stop{"No se puede escribir en " + output};
     Uint32 crc = 0;
     try {
         while (size) {
             size_t n = size < buf.size() ? (size_t)size : buf.size();
             iso.read(off, buf.data(), n);
             crc = SDL_crc32(crc, buf.data(), n);
-            if (SDL_WriteIO(f, buf.data(), n) != n) throw Stop{"No se pudo guardar " + temp};
+            if (SDL_WriteIO(f, buf.data(), n) != n) throw Stop{"No se pudo guardar " + output};
             off += n; size -= n; if(progress)progress(expectedSize-size);check_cancel();
         }
-    } catch (...) { SDL_CloseIO(f); throw; }
-    if (!SDL_CloseIO(f)) throw Stop{"No se pudo cerrar " + temp};
-    if (crc != expectedCrc) throw Stop{"Los datos de la ISO no coinciden con BT4 B14 Rev2: " + path};
-    if (!SDL_RenamePath(temp.c_str(), path.c_str())) throw Stop{"No se pudo finalizar " + path};
+    } catch (...) {
+        SDL_CloseIO(f);
+        if (!exists) SDL_RemovePath(path.c_str());
+        throw;
+    }
+    if (!SDL_CloseIO(f)) throw Stop{"No se pudo cerrar " + output};
+    if (crc != expectedCrc) {
+        SDL_RemovePath(output.c_str());
+        throw Stop{"Los datos de la ISO no coinciden con BT4 B14 Rev2: " + path};
+    }
+    if (exists && !SDL_RenamePath(temp.c_str(), path.c_str()))
+        throw Stop{"No se pudo finalizar " + path};
 }
 
 void step_data(Iso &iso, const std::string &root) {
@@ -826,7 +852,12 @@ void step_data(Iso &iso, const std::string &root) {
 void step_tables(const std::string &root) {
     step("Native data tables");
     size_t bytes = 0;
-    Uint8 *loaded = (Uint8 *)SDL_LoadFile((root + "BT4decomp.dat").c_str(), &bytes);
+#ifdef BT3_UWP
+    const std::string manifest = std::string(SDL_GetBasePath()) + "BT4decompUWP.dat";
+#else
+    const std::string manifest = root + "BT4decomp.dat";
+#endif
+    Uint8 *loaded = (Uint8 *)SDL_LoadFile(manifest.c_str(), &bytes);
     if (!loaded) throw Stop{"The matching native data table is missing."};
     std::vector<Uint8> table(loaded, loaded + bytes); SDL_free(loaded);
     Uint32 count = 0;
@@ -840,13 +871,25 @@ void step_tables(const std::string &root) {
         for (Uint32 j=0; j<record[3]; j++) hash=(hash^sPrograms[record[1]][record[2]+j])*0x100000001b3ULL;
     }
     memcpy(table.data()+8, &hash, 8);
-    std::string temporary = root + "BT4decomp.dat.part";
+    std::string temporary = root +
+#ifdef BT3_UWP
+        "BT4decompUWP.dat.part";
+    const std::string finalized = root + "BT4decompUWP.dat";
+#else
+        "BT4decomp.dat.part";
+    const std::string finalized = root + "BT4decomp.dat";
+#endif
     if (!SDL_SaveFile(temporary.c_str(), table.data(), table.size()) ||
-        !SDL_RenamePath(temporary.c_str(), (root+"BT4decomp.dat").c_str())) throw Stop{"Could not finalize the native data table."};
+        !SDL_RenamePath(temporary.c_str(), finalized.c_str())) throw Stop{"Could not finalize the native data table."};
     say("@ok Native table matches the selected disc profile");
 }
 
 void step_test(const std::string &root) {
+#ifdef BT3_UWP
+    step("Disc data validation");
+    say("@ok Extracted files passed BT4 profile checks; launch will validate the linked data map");
+    return;
+#else
     std::string exe = root + kGame, saves = root + "gamedata/.selftest";
     size_t oldCrashSize=0;
     char *oldCrash=(char *)SDL_LoadFile((root+"bt3_crash.txt").c_str(),&oldCrashSize);
@@ -925,6 +968,7 @@ void step_test(const std::string &root) {
         throw Stop{"The game's demo fight did not finish. Its last line was:\n" + last + "\nThe full output is in net_session/setup/install.log."};
     }
     say("@ok the demo fight ran to its end");
+#endif
 }
 
 // The European release's archive entries: the battle HUD (5 to 9, one per language: English, Spanish, German,

@@ -85,8 +85,13 @@ static void install_language(const std::string &root,bool english) {
                         compressed.resize(e.packed);raw.resize(e.size);
                         if(SDL_SeekIO(input,(Sint64)e.offset,SDL_IO_SEEK_SET)<0||SDL_ReadIO(input,compressed.data(),e.packed)!=e.packed)
                             throw Stop{"English pack is incomplete. Extract the complete ZIP again."};
+#ifdef BT3_UWP
+                        mz_ulong made=e.size;
+                        if(mz_uncompress(raw.data(),&made,compressed.data(),e.packed)!=MZ_OK||made!=e.size||SDL_crc32(0,raw.data(),made)!=crc)
+#else
                         uLongf made=e.size;
                         if(uncompress(raw.data(),&made,compressed.data(),e.packed)!=Z_OK||made!=e.size||SDL_crc32(0,raw.data(),made)!=crc)
+#endif
                             throw Stop{"Corrupt English pack entry: "+relative};
                         if(!SDL_SaveFile(temp.c_str(),raw.data(),raw.size()))throw Stop{"Could not write the English language data. Check free space."};
                     }else{

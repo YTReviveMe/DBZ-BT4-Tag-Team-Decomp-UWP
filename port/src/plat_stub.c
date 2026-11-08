@@ -9,6 +9,9 @@
 #include <string.h>
 #ifdef _WIN32
 #include <windows.h>
+#ifdef BT3_UWP
+#undef small
+#endif
 #include <mmsystem.h>
 #endif
 #include <stdlib.h>

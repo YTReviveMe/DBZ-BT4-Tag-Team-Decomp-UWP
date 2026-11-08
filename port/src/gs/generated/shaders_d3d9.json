@@ -49,7 +49,6 @@
     {
       "shader": "gs.frag",
       "compiled": true,
-      "diagnostics": "C:\\Users\\ygonzalezgarcia\\Documents\\Codex\\2026-10-18\\quiero-que-me-ayudes-a-solucionar-2\\gs.frag(106,45-78): warning X4121: gradient-based operations must be moved out of flow control to prevent divergence. Performance may improve by using a non-gradient operation\n\u0000",
       "bytes": 3608,
       "sha256": "1743533b2f713bd2043d59061f32cf2c3a74d643b4d2d8326d345c1c2553d587"
     },
@@ -62,14 +61,12 @@
     {
       "shader": "gsnz.frag",
       "compiled": true,
-      "diagnostics": "C:\\Users\\ygonzalezgarcia\\Documents\\Codex\\2026-10-18\\quiero-que-me-ayudes-a-solucionar-2\\gsnz.frag(104,45-78): warning X4121: gradient-based operations must be moved out of flow control to prevent divergence. Performance may improve by using a non-gradient operation\n\u0000",
       "bytes": 3336,
       "sha256": "46c462820a99a877de45ab7f523684ccde8995762d1a81e1fe3e5bddacd5640c"
     },
     {
       "shader": "gswb.frag",
       "compiled": true,
-      "diagnostics": "C:\\Users\\ygonzalezgarcia\\Documents\\Codex\\2026-10-18\\quiero-que-me-ayudes-a-solucionar-2\\gswb.frag(138,45-78): warning X4121: gradient-based operations must be moved out of flow control to prevent divergence. Performance may improve by using a non-gradient operation\n\u0000",
       "bytes": 4772,
       "sha256": "9b1d1db344cc23a6e7d9d1c11a6cedd12928eb22cb34a8914be0ab5bff5084ed"
     },

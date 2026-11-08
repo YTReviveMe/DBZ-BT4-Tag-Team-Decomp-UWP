@@ -23,4 +23,7 @@
 #define fabsf Port_fabsf
 #define scalbnf Port_scalbnf
 #define copysignf Port_copysignf
+#ifdef BT3_UWP
+#define logbf BT4_newlib_logbf
+#endif
 #endif

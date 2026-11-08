@@ -2896,7 +2896,7 @@ SDL_Window *GsDraw_WindowCreate(int opengl) {
     }
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, sFullscreen);
     sWindow = SDL_CreateWindowWithProperties(props);
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BT3_UWP)
     if(sWindow){
         HWND hwnd=(HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(sWindow),SDL_PROP_WINDOW_WIN32_HWND_POINTER,NULL);
         HINSTANCE module=GetModuleHandleW(NULL);
@@ -3021,7 +3021,9 @@ void GsGpu_SetSettings(const PortVideo *v) {
     }
     if (v->vsync != now.vsync) { /* (whichever back end draws) */
         GsGpu_Vsync(v->vsync);
+#ifndef BT3_UWP
         GsGl_Vsync(v->vsync);
+#endif
         Port_SettingSave("vsync", v->vsync);
     }
     sDisplaySetting = v->display;
@@ -3053,6 +3055,9 @@ void GsGpu_SetSettings(const PortVideo *v) {
 
 int GsGpu_Init(void) {
     const char *api = getenv("BT3_GPU_API");
+#ifdef BT3_UWP
+    api = "dx12";
+#endif
     GsBackend *sb;
 
     gsScale = getenv("BT3_SCALE") != NULL ? atoi(getenv("BT3_SCALE")) : Port_Setting("scale", 2);

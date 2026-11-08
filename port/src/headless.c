@@ -15,6 +15,12 @@
 #include "plat_stages.h"
 #include "plat_songs.h"
 #include "port_addr.h"
+#ifdef BT3_UWP
+extern void PortUwp_Trace(const char *message);
+#define BT4_BOOT_STAGE(message) PortUwp_Trace(message)
+#else
+#define BT4_BOOT_STAGE(message) ((void)0)
+#endif
 
 extern void Battle_ClearWork(void);
 extern int BattleReplay_Load(void *buf, int size);
@@ -113,15 +119,18 @@ static void port_stage_replace_init(void) {
 extern void Port_NetRules(int *type, int *dp, int *time); /* gs/net.c */
 
 int __wrap_Progress_Main(int arg) {
+    BT4_BOOT_STAGE("BT4 menu: preparing extra content");
     if(getenv("BT4_RENDER_TEST")&&getenv("BT4_VOICE_SELFTEST")){extern int PortVoice_TestRun(void);exit(PortVoice_TestRun());}
     const char *path;
     PortStages_Init();
     PortSongs_Init();
+    BT4_BOOT_STAGE("BT4 menu: checking disc profile");
     {
         extern void Port_VerifyStart(void); /* plat_verify.c: is the data the original disc's (in the background) */
         Port_VerifyStart();
     }
     port_stage_replace_init();
+    BT4_BOOT_STAGE("BT4 menu: entering game menu");
     path = getenv("BT3_REPLAY");
 
     if (path == NULL && getenv("BT3_DEMO") == NULL) {
@@ -216,6 +225,7 @@ int __wrap_Progress_Main(int arg) {
                 }
             }
             gPortMenuMode = 1; /* the renderer treats all 2D as one centred 4:3 page while the menus run */
+            BT4_BOOT_STAGE("BT4 menu: calling Progress_Main");
             r = __real_Progress_Main(arg);
             gPortMenuMode = 0;
             sFromMenu = 1; /* a battle set up by the real menus follows: the traces apply to it too */

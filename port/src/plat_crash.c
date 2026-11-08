@@ -94,6 +94,20 @@ static LONG WINAPI on_crash(EXCEPTION_POINTERS *e) {
     if (InterlockedExchange(&once, 1) != 0) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
+#ifdef BT3_UWP
+    {
+        extern void PortUwp_CrashTrace(const char *message);
+        char summary[256];
+        snprintf(summary, sizeof(summary),
+                 "BT4 crash: exception 0x%08lX at 0x%llX; address 0x%llX; stage: %s",
+                 (unsigned long)code,
+                 (unsigned long long)(uintptr_t)e->ExceptionRecord->ExceptionAddress,
+                 (unsigned long long)(e->ExceptionRecord->NumberParameters >= 2 ?
+                     e->ExceptionRecord->ExceptionInformation[1] : 0),
+                 gPortStage);
+        PortUwp_CrashTrace(summary);
+    }
+#endif
     sCrashOut[0] = GetStdHandle(STD_ERROR_HANDLE);
     sCrashOut[1] = CreateFileA("bt3_crash.txt", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     crash_put("bt3: crashed: exception ");

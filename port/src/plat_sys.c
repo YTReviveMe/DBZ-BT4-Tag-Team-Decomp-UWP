@@ -4,7 +4,11 @@
  */
 #include <stdint.h>
 
+#ifdef BT3_UWP
+int Port_GameGetThreadId(void) { return 1; }
+#else
 int GetThreadId(void) { return 1; }
+#endif
 int ChangeThreadPriority(int tid, int prio) { (void)tid; (void)prio; return 0; }
 void FlushCache(int mode) { (void)mode; }
 
