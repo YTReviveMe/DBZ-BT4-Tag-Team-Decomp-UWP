@@ -7,7 +7,9 @@ extern "C" {
 #endif
 
 typedef struct PortVideo {
-    int scale;       /* internal resolution multiplier, 1..8 */
+    float scale;     /* internal resolution multiplier: .5, .75, 1..8 */
+    int performance; /* reversible quality preset, independent of graphics API */
+    int windowPercent; /* 0 retain window size, otherwise 50/75/100 percent of desktop height */
     int aspectMilli; /* width / height of the picture * 1000 */
     int fullscreen;
     int fxOff;       /* bits: 1 outline, 2 see-through tint, 4 depth tint, 8 glare and glow, 16 distance blur, 32 movement blur, 64 weather,
@@ -84,6 +86,8 @@ extern int gPortChatTyping;    /* a line of the online chat is being typed: the 
 
 /* ui.cpp */
 int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const char *gpu_name); /* device: the SDL GPU back end; NULL and a GL context: the OpenGL one */
+int Ui_InitD3D11(SDL_Window *window,void *device,void *context,const char *gpu_name);
+void Ui_DrawD3D11(void);
 int Ui_InitD3D9(SDL_Window *window, void *device, const char *gpu_name);
 void Ui_DrawD3D9(void);
 void Ui_D3D9Reset(int create);

@@ -420,6 +420,12 @@ static int json_peer(const char *json, MatchStatus *st) {
 
 /* ---- STUN (RFC 5389): one question, "which address do you see me under?" ---- */
 
+static struct sockaddr_in sStunKeep[2];
+static int sStunKeepCount;
+static void stun_keepalive(int sock){
+    static const unsigned char indication[20]={0,0x11,0,0,0x21,0x12,0xa4,0x42};
+    int i;for(i=0;i<sStunKeepCount;i++)sendto(sock,(const char*)indication,sizeof(indication),0,(struct sockaddr*)&sStunKeep[i],sizeof(sStunKeep[i]));
+}
 static int stun_ask(int sock, const char *host, int port, char *out, size_t size) {
     struct addrinfo hints, *res = NULL;
     uint8_t req[20], pkt[512];
@@ -446,7 +452,7 @@ static int stun_ask(int sock, const char *host, int port, char *out, size_t size
             struct sockaddr_in from;
             socklen_t fromLen = sizeof(from);
             int n = (int)recvfrom(sock, (char *)pkt, sizeof(pkt), 0, (struct sockaddr *)&from, &fromLen), at;
-            if (n < 20 || pkt[0] != 0x01 || pkt[1] != 0x01 || SDL_memcmp(pkt + 8, req + 8, 12) != 0) {
+            if (n < 20 || pkt[0] != 0x01 || pkt[1] != 0x01 || SDL_memcmp(pkt + 4, req + 4, 16) != 0) {
                 SDL_Delay(10);
                 continue;
             }
@@ -464,6 +470,7 @@ static int stun_ask(int sock, const char *host, int port, char *out, size_t size
                         ip[0] ^= 0x21; ip[1] ^= 0x12; ip[2] ^= 0xA4; ip[3] ^= 0x42;
                     }
                     SDL_snprintf(out, size, "%u.%u.%u.%u:%u", ip[0], ip[1], ip[2], ip[3], p);
+                    if(sStunKeepCount<2)memcpy(&sStunKeep[sStunKeepCount++],res->ai_addr,sizeof(struct sockaddr_in));
                     freeaddrinfo(res);
                     return 1;
                 }
@@ -505,9 +512,45 @@ static int lan_address(int localPort, char *out, size_t size) {
 
 /* ---- the thread ---- */
 
+static int room_turn_cancelled(void) { return STOPPED(); }
+
+static void prepare_room_turn(unsigned generation, Bt4RoomTurn *turn) {
+    char address[64], candidate[64], *colon;
+    int sock, installed = 0;
+    void *pending;
+    SDL_LockMutex(sM.lock);
+    if (STOPPED()) {
+        SDL_UnlockMutex(sM.lock);
+        return;
+    }
+    sock = sM.sock;
+    SDL_SetAtomicInt(&sM.sockBusy, 1);
+    SDL_UnlockMutex(sM.lock);
+    /* The open lobby has stopped reading the socket before allocation. */
+    SDL_Delay(40);
+    pending = STOPPED() ? NULL : Relay_PrepareRoom(sock, turn->server, turn->username,
+                                                  turn->password, address, sizeof(address), room_turn_cancelled);
+    SDL_memset(turn, 0, sizeof(*turn));
+    SDL_LockMutex(sM.lock);
+    if (pending && !STOPPED() && (colon = strrchr(address, ':')) != NULL) {
+        *colon++ = '\0';
+        SDL_snprintf(candidate, sizeof(candidate), "[%s]:%s", address, colon);
+        installed = 1;
+    }
+    Relay_FinishRoom(pending, installed);
+    if (generation == (unsigned)SDL_GetAtomicInt(&sM.gen))
+        SDL_SetAtomicInt(&sM.sockBusy, 0);
+    SDL_UnlockMutex(sM.lock);
+    if (!STOPPED()) {
+        fprintf(stderr, "bt4: room TURN allocation=%s\n", installed ? "ready" : "unavailable");
+        Bt4Discovery_TurnReady(generation, installed ? candidate : NULL);
+    }
+}
+
 static int supabase_match_loop(const char *name,const char *addrs){
     unsigned generation=(unsigned)(uintptr_t)SDL_GetTLS(&sMine);
-    unsigned long long content=0;char addresses[192],identityError[256];Bt4DiscoveryStatus status;
+    Uint64 nextKeep=SDL_GetTicks()+15000;
+    unsigned long long content=0;char addresses[260],identityError[256];Bt4DiscoveryStatus status;
     extern int Port_BuildIdentity(unsigned long long *);
     extern const char *Port_BuildIdentitySummary(void);
     if(Port_BuildIdentity(&content)!=1){
@@ -519,7 +562,13 @@ static int supabase_match_loop(const char *name,const char *addrs){
         set_state(-1,"The matchmaking could not be started.");return 0;
     }
     while(!STOPPED()){
+        Bt4RoomTurn turn;
+        if(SDL_GetTicks()>=nextKeep){stun_keepalive(sM.sock);nextKeep=SDL_GetTicks()+15000;}
         if(!Bt4Discovery_Poll(generation,&status))break;
+        if(Bt4Discovery_TakeTurn(generation,&turn)){
+            prepare_room_turn(generation,&turn);
+            continue;
+        }
         SDL_LockMutex(sM.lock);
         if(!STOPPED()){
             sM.st.state=status.state;sM.st.role=status.role;sM.st.lobby=status.lobby;
@@ -540,7 +589,7 @@ static int supabase_match_loop(const char *name,const char *addrs){
 }
 
 static int SDLCALL match_thread(void *arg) {
-    char pub[64] = "", lan[64] = "", addrs[160], body[512], answer[4096], key[40] = "", you[64] = "", name[20], relayAddr[64] = "";
+    char pub[64] = "", alternate[64] = "", lan[64] = "", addrs[256], body[512], answer[4096], key[40] = "", you[64] = "", name[20], relayAddr[64] = "";
     int i, n = 0, hosting, searches = 0, again = 0;
     Uint64 began = SDL_GetTicks(); /* (a quick match: when the search began, for `waited`) */
 
@@ -553,9 +602,13 @@ static int SDLCALL match_thread(void *arg) {
     }
     name[n] = '\0';
     if (!name[0]) SDL_strlcpy(name, "Player", sizeof(name));
-    if (!stun_ask(sM.sock, "stun.l.google.com", 19302, pub, sizeof(pub))) {
+    sStunKeepCount=0;
+    if (!stun_ask(sM.sock, "stun.l.google.com", 19302, pub, sizeof(pub)))
         stun_ask(sM.sock, "stun1.l.google.com", 19302, pub, sizeof(pub));
-    }
+    stun_ask(sM.sock,"global.stun.twilio.com",3478,alternate,sizeof(alternate));
+    if(!pub[0]&&alternate[0]){SDL_strlcpy(pub,alternate,sizeof(pub));alternate[0]=0;}
+    if(!strcmp(pub,alternate))alternate[0]=0;
+    fprintf(stderr,"bt4: connect: STUN public=%d alternate=%d mapping-varies=%d\n",pub[0]!=0,alternate[0]!=0,pub[0]&&alternate[0]);
     lan_address(sM.localPort, lan, sizeof(lan));
     if (STOPPED()) {
         return 0;
@@ -567,6 +620,7 @@ static int SDLCALL match_thread(void *arg) {
        place, below, once the Worker has said what it sees) */
     SDL_snprintf(addrs, sizeof(addrs), "%s%s%s%s%s%s%s", pub[0] ? "\"" : "", pub, pub[0] ? "\"" : "", pub[0] && lan[0] ? "," : "", lan[0] ? "\"" : "", lan,
                  lan[0] ? "\"" : "");
+    if(alternate[0]){size_t used=SDL_strlen(addrs);SDL_snprintf(addrs+used,sizeof(addrs)-used,"%s\"%s\"",used?",":"",alternate);}
     if (addrs[0] == '\0') {
         set_state(-1, "This computer's address could not be found (no network?).");
         return 0;
@@ -997,7 +1051,9 @@ void Match_Begin(int role, int sock, int localPort, const char *code, const char
         SDL_DetachThread(sM.thread); /* (it stops by itself: its search number is no longer the current one) */
         sM.thread = NULL;
     }
+    SDL_LockMutex(sM.lock);
     SDL_AddAtomicInt(&sM.gen, 1);
+    SDL_SetAtomicInt(&sM.sockBusy, 0);
     SDL_SetAtomicInt(&sM.cancel, 0);
     SDL_memset(&sM.st, 0, sizeof(sM.st));
     sM.st.state = 1;
@@ -1021,6 +1077,7 @@ void Match_Begin(int role, int sock, int localPort, const char *code, const char
     sM.watchCount = 0;
     sM.watchGen++;
     SDL_SetAtomicInt(&sM.relayAsk, 0);
+    SDL_UnlockMutex(sM.lock);
     sM.thread = SDL_CreateThread(match_thread, "bt3-match", (void *)(intptr_t)SDL_GetAtomicInt(&sM.gen));
     if (sM.thread == NULL) {
         set_state(-1, "The matchmaking could not be started.");

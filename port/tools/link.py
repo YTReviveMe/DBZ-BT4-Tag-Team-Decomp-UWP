@@ -81,18 +81,23 @@ def link(objs, extra):
         # Keep the supplied game icon in every Windows build, including rebuilds.
         icon_dir = ROOT / "port/release"
         icon_obj = B / "game_icon.res.o"
-        icon_inputs = [icon_dir / "game_icon.rc", icon_dir / "icon_game.ico", icon_dir / "app.manifest"]
+        from windows_version import render
+        resource = B / "game-version.rc"
+        content = render('game')
+        if not resource.exists() or resource.read_text(encoding='utf-8') != content:
+            resource.write_text(content, encoding='utf-8')
+        icon_inputs = [icon_dir / "game_icon.rc", icon_dir / "icon_game.ico", icon_dir / "app.manifest", resource]
         if not all(p.is_file() for p in icon_inputs):
             raise RuntimeError("The BT4 Windows icon resources are missing")
         if not icon_obj.exists() or any(p.stat().st_mtime_ns > icon_obj.stat().st_mtime_ns for p in icon_inputs):
-            subprocess.run([PREFIX + "windres", "-O", "coff", "-i", "game_icon.rc", "-o", str(icon_obj)], cwd=icon_dir, check=True)
+            subprocess.run([PREFIX + "windres", "-O", "coff", "-i", str(resource), "-o", str(icon_obj)], cwd=icon_dir, check=True)
         objs = [*objs, str(icon_obj)]
         # Windows: the program at a fixed address below 4 GB (no relocation: the game's 4-byte pointers and the
         # 32-bit addresses in its data tables depend on it), the game's main() wrapped for a low stack (plat_mem.c),
         # the compiler's own libraries linked in, SDL3 as SDL3.dll next to the program.
         lib = [f"-L{sdl3() / 'lib'}"] if sdl3() else []
         cmd = [PREFIX + "gcc", "-w", "-o", str(EXE)] + extra + objs + lib + \
-              ["-lSDL3", "-lm", "-lwinmm", "-lws2_32", "-lwinhttp", "-ladvapi32", "-static-libgcc", "-Wl,-Bstatic", "-lstdc++", "-lwinpthread", "-Wl,-Bdynamic",
+              ["-lSDL3", "-lm", "-lwinmm", "-lws2_32", "-lwinhttp", "-ladvapi32", "-ld3dcompiler", "-ldxguid", "-static-libgcc", "-Wl,-Bstatic", "-lstdc++", "-lwinpthread", "-Wl,-Bdynamic",
                "-Wl,--image-base,0x20000000", "-Wl,--disable-dynamicbase", "-Wl,--disable-reloc-section", "-Wl,--disable-high-entropy-va", "-Wl,--wrap=main",
                "-Wl,--stack,0x1000000", "-mwindows"] + common
         argsfile = B / "link.rsp"

@@ -116,9 +116,9 @@ def main():
         results = list(pool.map(compile_one, sources))
         results += list(pool.map(compile_newlib, sorted((ROOT / "port/third_party/newlib_libm").glob("*.c"))))
         results += list(pool.map(compile_cpp, sorted(f for f in (ROOT / "port/third_party/imgui").glob("*.cpp")
-                                             if f.name not in {"imgui_impl_opengl3.cpp", "imgui_impl_dx9.cpp"}) +
+                                             if f.name not in {"imgui_impl_opengl3.cpp", "imgui_impl_dx9.cpp", "imgui_impl_dx11.cpp"}) +
                                       sorted(f for f in (ROOT / "port/src/gs").glob("*.cpp")
-                                             if f.name != "gs_d3d9.cpp")))
+                                             if f.name not in {"gs_d3d9.cpp", "gs_d3d11.cpp"})))
         results += list(pool.map(compile_one, [ROOT / "port/uwp/time.c", ROOT / "port/uwp/stdio.c"]))
         results += list(pool.map(compile_data, sorted((ROOT / "port/data").glob("*.s"))))
         results += list(pool.map(compile_data, [ROOT / "port/uwp/absolute_symbols.s"]))

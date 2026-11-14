@@ -1,3 +1,179 @@
+# 0.1.39.5 R5 1.7
+
+- Online system maintenance and compatibility updates across matchmaking modes.
+
+<!-- bt4-update:en
+- Online system maintenance and compatibility updates across matchmaking modes. Update through the launcher to use the latest revision.
+-->
+<!-- bt4-update:es
+- Mantenimiento del sistema online y ajustes de compatibilidad entre modos. Actualiza desde el launcher para utilizar la versión más reciente.
+-->
+<!-- bt4-update:pt
+- Manutenção do sistema online e ajustes de compatibilidade entre modos. Atualize pelo launcher para utilizar a versão mais recente.
+-->
+
+# 0.1.39.5 R5 1.6
+
+- Recover a rejected online session through the installation's verified existing account, instead of retrying the same rejected credentials indefinitely. Registered profiles and competitive records are retained.
+- Retry authentication when a connection rejects a cached access token before its local renewal time. Apply the recovery to both WebSocket and HTTPS signaling.
+- Check the primary saved session when an obsolete secondary session prevents the initial migration. Existing account IDs are retained in the session cache and checked before recovery can replace it.
+
+<!-- bt4-update:en
+- Fix online access getting stuck after a saved session is rejected. Recover through your verified existing account and retain your profile and progress.
+-->
+<!-- bt4-update:es
+- Corrige el acceso online bloqueado por una sesión guardada rechazada. Recupera tu cuenta existente verificada y conserva tu perfil y progreso.
+-->
+<!-- bt4-update:pt
+- Corrige o acesso online bloqueado por uma sessão salva rejeitada. Recupera sua conta existente verificada e mantém seu perfil e progresso.
+-->
+
+# 0.1.39.5 R5 1.5
+
+- Move online accounts, unique nicknames and competitive profiles to the Cloudflare service. Existing installations migrate their identity automatically when first connecting.
+- Use an authenticated WebSocket for rooms, matchmaking and signaling, with HTTPS recovery on networks that block WebSocket connections. Combat remains peer to peer, with temporary Cloudflare TURN credentials available when a relay is needed.
+- Add a reversible Performance mode, 0.5x and 0.75x internal resolution, and window resolution controls. Effects and HD texture preferences remain adjustable.
+- Add a native Direct3D 11 renderer on Windows with offline Shader Model 5 programs, alongside the native Direct3D 12 and Vulkan backends.
+- Add unlimited presentation under Smooth motion. Additional rendered pictures use the time before the next simulation tick, without changing combat or online timing.
+
+<!-- bt4-update:en
+- Online accounts and matchmaking move to Cloudflare, with automatic identity migration and temporary relay credentials.
+- Performance mode adds lower resolution options and adjustable effects, native DirectX 11 and unlimited presentation.
+-->
+<!-- bt4-update:es
+- Las cuentas y el emparejamiento pasan a Cloudflare, con migración automática de identidad y credenciales temporales de relay.
+- El modo rendimiento añade resoluciones más bajas y efectos ajustables, DirectX 11 nativo y renderizado sin límite de FPS.
+-->
+<!-- bt4-update:pt
+- As contas e o pareamento passam para a Cloudflare, com migração automática de identidade e credenciais temporárias de relay.
+- O modo de desempenho oferece resoluções menores e efeitos ajustáveis, DirectX 11 nativo e renderização sem limite de FPS.
+-->
+
+# 0.1.39.5 R5 1.4
+
+- Online play can fall back to a relay when a direct connection fails. Duel adjusts input delay for relayed connections to reduce stalls, and Tag Team measures round-trip time for both hosts and guests.
+- The updater keeps temporary rollback files in its own folder and cleans them up after installation.
+
+<!-- bt4-update:en
+- Online matches can use a relay when direct connection fails. Relayed duels adjust input delay to reduce stalls.
+- Update backups are kept in the updater folder and cleaned up after installation.
+-->
+<!-- bt4-update:es
+- Las partidas online pueden usar un relay si falla la conexión directa. Duelo ajusta el retardo por relay para reducir tirones.
+- Los respaldos de la actualización quedan en la carpeta del actualizador y se limpian tras instalar.
+-->
+<!-- bt4-update:pt
+- As partidas online podem usar um relay quando a conexão direta falha. No Duelo, o atraso é ajustado para reduzir travamentos.
+- Os backups da atualização ficam na pasta do atualizador e são removidos após a instalação.
+-->
+
+# 0.1.39.5 R5 1.3
+
+- Ranked now identifies which player confirmed a surrender in the pause menu. A verified abandonment transfers 16 points to the opponent, subject to rating limits. Inconclusive disconnects leave both ratings unchanged.
+
+<!-- bt4-update:en
+- A confirmed Ranked surrender penalizes the player who left and awards points to the opponent.
+-->
+<!-- bt4-update:es
+- Una rendición confirmada en Clasificatorias descuenta puntos a quien abandona y se los otorga al rival.
+-->
+<!-- bt4-update:pt
+- Uma desistência confirmada nas ranqueadas desconta pontos de quem saiu e os concede ao adversário.
+-->
+
+# 0.1.39.5 R5 1.2
+
+- See the ten highest-ranked fighters and their scores in the Online menu. Open the Global Top directly from Ranked and keep the last standings visible while new data loads. The standings refresh every ten minutes.
+- Reserve an online nickname for your account. Existing scores and match history stay with the account when its nickname changes.
+- Resume waiting searches more quickly when the Online service switches routes.
+
+<!-- bt4-update:en
+- See the Top 10 in the Online menu, with standings refreshed every ten minutes.
+- Reserve a unique online nickname and keep your Ranked progress.
+- Resume waiting searches more quickly during Online failover.
+-->
+<!-- bt4-update:es
+- Consulta el Top 10 en el menú Online, con una tabla que se actualiza cada diez minutos.
+- Reserva un apodo único y conserva tu progreso en Clasificatorias.
+- Reanuda más rápido las búsquedas cuando cambia el servidor Online.
+-->
+<!-- bt4-update:pt
+- Consulte o Top 10 no menu Online, atualizado a cada dez minutos.
+- Reserve um apelido exclusivo e mantenha seu progresso nas ranqueadas.
+- Retome as buscas mais rapidamente quando o servidor Online mudar.
+-->
+
+# 0.1.39.5 R5 1.1
+
+- Keep an opponent's disconnect separate from your own surrender in Ranked. When the server confirms an abandonment, the player who stayed gains 16 points and the player who left loses 16, within the rating limits. The result is shown for two seconds even if the game has already returned to the menu.
+- Confirm the selected fighter from the roster in individual and native team battles so a stale portrait cannot replace Yamcha with another fighter.
+
+<!-- bt4-update:en
+- Fix Ranked abandonment notices and confirm the selected fighter from the roster.
+-->
+<!-- bt4-update:es
+- Corrige los avisos de abandono en Clasificatorias y confirma al luchador desde su casilla.
+-->
+<!-- bt4-update:pt
+- Corrige os avisos de abandono nas ranqueadas e confirma o lutador pelo elenco.
+-->
+
+# 0.1.39.5 R5 Hotfix
+
+> **Windows antivirus review in progress.** Users reported alerts for the R5 executable and libdatachannel.dll. The vendor verdicts remain unresolved. See the [investigation](https://github.com/NauTaro/DBZ-BT4-Tag-Team-Decomp/blob/main/docs/security/windows-antivirus-review.md) and the [SHA-256 manifests for the Hotfix](https://github.com/NauTaro/DBZ-BT4-Tag-Team-Decomp/tree/main/checksums/v0.1.39.5-R5.1).
+
+- Add authenticated Ranked fight liveness and a fixed 16-point transfer for forfeits, applied once after both players have started fighting. Failed room connections and character selection do not cost points; two disconnected clients do not receive a timeout win.
+- Allow 30 minutes without room communication before established lobbies and tournaments time out; renew active room leases instead of imposing a total playtime limit.
+- Expire Ranked result notifications after two seconds, including when switching menus.
+- Keep advertised UDP mappings alive during long matchmaking waits, discover alternate public endpoints on UDP 3478, and add an independent STUN fallback to Tag Team.
+- Retry unacknowledged Tag Team negotiation messages within a bounded connection window.
+- Join the [official Discord community](https://discord.gg/EBhh5ef3T6) for matchmaking, news and support.
+
+<!-- bt4-update:en
+- Award the remaining player 16 points and deduct them from a Ranked opponent who leaves a started fight.
+- Dismiss rating notifications after two seconds.
+- Improve connection discovery and retry Tag Team negotiation messages.
+-->
+<!-- bt4-update:es
+- Suma 16 puntos al rival que permanece y los descuenta a quien abandona un combate clasificatorio iniciado.
+- Oculta los avisos de puntos después de dos segundos.
+- Mejora el descubrimiento de conexiones y reintenta los mensajes de conexión de Tag Team.
+-->
+<!-- bt4-update:pt
+- Adiciona 16 pontos ao jogador que permanece e desconta de quem abandona uma luta ranqueada iniciada.
+- Oculta os avisos de pontos após dois segundos.
+- Melhora a descoberta de conexões e repete as mensagens de negociação do Tag Team.
+-->
+
+# 0.1.39.5 R5
+
+- Add separate Ranked queues for solo and native Team Battle, with independent ratings and matchmaking rules.
+- Explain starting points, rating changes, weekly records and the hourly Top in a concise localized Ranked guide.
+- Start new players at 1000 points, apply Elo K=32, and keep ratings between weekly seasons. Weekly records reset Sunday at 23:59 Argentina time; the public Top refreshes hourly.
+- Submit Ranked results only after both participants report the same outcome and match digest. This peer-to-peer agreement is not independent anti-cheat verification.
+- Keep the secondary database as the single Ranked rating authority. Ranked matchmaking reports unavailable while the primary route is active, avoiding separate rating histories during failover.
+- Keep online room discovery and casual matchmaking separate from Ranked admission and result reporting.
+- Ship only the six signed Windows, Linux and macOS update files; the database deployment archive is not a game installer asset.
+
+<!-- bt4-update:en
+- Add separate Ranked solo and native Team Battle queues with independent ratings.
+- Keep points between weekly seasons, refresh the Top hourly, and reset weekly records Sunday at 23:59 Argentina time.
+- Count a result only when both players report matching results; peer reports are not independent anti-cheat verification.
+- Keep casual matchmaking separate and ship the six signed platform update files.
+-->
+<!-- bt4-update:es
+- Añade colas clasificatorias separadas para Duelo individual y Combate por equipos nativo, con puntuaciones independientes.
+- Conserva los puntos entre temporadas semanales, actualiza el Top cada hora y reinicia el registro semanal los domingos a las 23:59 de Argentina.
+- Cuenta el resultado sólo cuando ambos jugadores informan el mismo resultado; los informes entre pares no son una verificación antitrampas independiente.
+- Mantiene separado el emparejamiento casual e incluye los seis archivos firmados de actualización para las plataformas.
+-->
+<!-- bt4-update:pt
+- Adiciona filas ranqueadas separadas para Solo e Batalha de Equipes nativa, com pontuações independentes.
+- Mantém os pontos entre temporadas semanais, atualiza o Top a cada hora e reinicia o registro semanal aos domingos às 23h59 da Argentina.
+- Só contabiliza o resultado quando ambos os jogadores enviam o mesmo resultado; os relatos entre pares não são uma verificação antitrapaça independente.
+- Mantém o pareamento casual separado e inclui os seis arquivos de atualização assinados para as plataformas.
+-->
+
 # 0.1.39.5 R4
 
 - Restore the full single-view layout after chase-camera updates when cinematic cameras are disabled; cache each visible camera update independently of rollback rendering.
@@ -13,7 +189,6 @@
 - Add signed principal/reserve matchmaking routing with separate project identities, pinned rooms, invitation namespaces and bounded retries.
 - Include an additive Supabase deployment bundle and a coordinated minimum-client gate for new matchmaking. Activation remains disabled until the public signed update packages are verified and the operator completes the database preparation.
 - Extend native footer panels without repeating the corner ornaments or leaving discontinuous texture joins; match the main Online entry to the installed BT4 menu lettering and colour ramp.
-- Keep experimental anime auras and the separate development menu out of this release.
 
 <!-- bt4-update:en
 - Correct full-screen chase-camera layout and repeated camera updates.

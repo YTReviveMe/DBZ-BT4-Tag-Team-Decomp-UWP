@@ -30,6 +30,7 @@
 #include <SDL3/SDL.h>   /* the one window both back ends share */
 #include "gs_internal.h"
 #include "gs_draw.h"
+#include "render_pacing.h"
 #include "../../include/port_render_markers.h"
 #include "menu_wide_layout.h"
 #include "menu_panel_layout.h"
@@ -125,7 +126,7 @@ void Gs_HoldFrame(void) {
 extern int Bt4MenuHD_Request(const uint32_t *, int, int, int, uint64_t, uint32_t **);
 /* BT4 R3: native artworks and glyph sprites come only from disc or the external pack. */
 static const int sMenuHD = 0;
-static int sOnlineQualityScale = -1;
+static float sOnlineQualityScale = -1;
 extern int Port_GameProfileMenuActive(void);
 static int sSmooth2d = 1; /* the setting "2D filtering" (smooth_2d; BT3_2D_SMOOTH=0/1 wins): 1 smooth */
 static int sWholeFrame; /* the draw being set up shows a frame the game read back (the cross-fade) */
@@ -147,8 +148,8 @@ static int sFullscreen;
 static float sWantAspect;
 static int sDisplaySetting;
 
-int gsScale = 2;
-int gsPendingScale;
+float gsScale = 2;
+float gsPendingScale;
 GsTex gsWhite;
 GsDraw *gsDraws;
 uint32_t gsDrawCount;
@@ -274,7 +275,12 @@ static int menu_piece_moving(const Vtx *v, const Vtx *last, float x0, float x1, 
 
 static void menu_hd_trim(uint64_t incoming);
 static void texture_cache_trim(void);
+void GsGpu_InterpPump(int ahead_ms, int all);
 void GsGpu_ListStart(void) {
+    /* In a single-threaded backend the next list can arrive before the final
+       scheduled picture. Finish it before replacing its geometry or textures,
+       so the next interpolation uses the immediately preceding game tick. */
+    if (!gGsResim) { GsGpu_InterpPump(0, 1); }
     texture_cache_trim();
     menu_hd_trim(0);
     sMenuFree = 0;
@@ -1019,7 +1025,7 @@ static GsTex texture_get(int ctx, int menuHd) {
     }
     /* Font replacements follow their settings and resolution. A new label catalog also refreshes cached Battle
        texture identities when the artwork is still on "Original". */
-    gen ^= MenuText_TexKey((int)tw, (int)th, bits <= 8, (int)tbp, (int)cbp, MenuText_RasterScale(SCALE));
+    gen ^= MenuText_TexKey((int)tw, (int)th, bits <= 8, (int)tbp, (int)cbp, MenuText_RasterScale((int)ceilf(SCALE)));
     if (menuHd) { gen ^= 0xB7404D00u + (uint32_t)sMenuHD; }
     if (originalBootText) { gen ^= 0xB007F017u; }
     gen ^= bits <= 8 ? MenuLabels_ArtKey() : 0; /* the chosen language's menu art ready: decoded again */
@@ -1154,7 +1160,7 @@ static GsTex texture_get(int ctx, int menuHd) {
     if ((!replaced || localizedMenu || selectedFont) && px != NULL) {
         int mw, mh;
         uint64_t font_t0 = gpu_now();
-        int textScale = MenuText_RasterScale(SCALE);
+        int textScale = MenuText_RasterScale((int)ceilf(SCALE));
         uint8_t *text = MenuText_RenderGlyphs((uint8_t *)px, (int)tw, (int)th, (int)tbp, (int)cbp, textScale, &mw, &mh);
         sharedText = text != NULL;
         if (text == NULL) { text = MenuText_Render((uint8_t *)px, (int)tw, (int)th, bits <= 8, textScale, &mw, &mh); }
@@ -1714,7 +1720,7 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
     d->misc[2] = (float)(gGs.fba[ctx] & 1);
     d->blendc = (float)((gGs.alpha[ctx] >> 32) & 0xFF) / 128.0f;
     {
-        int ts = lowres_now(d->target) ? 1 : SCALE; /* (a work buffer at the PS2's resolution: target_lowres) */
+        float ts = lowres_now(d->target) ? 1.0f : SCALE; /* (a work buffer at the PS2's resolution: target_lowres) */
         d->scissor[0] = (int)(sc & 0x7FF) * ts;
         d->scissor[1] = (int)((sc >> 32) & 0x7FF) * ts;
         d->scissor[2] = ((int)((sc >> 16) & 0x7FF) + 1) * ts - d->scissor[0];
@@ -2652,6 +2658,9 @@ static int grade_supported(void) {
     if(sBackend==&sVulkanBackend)return 1;
 #ifdef _WIN32
     if(sBackend==&sDirect3D12Backend)return 1;
+#ifndef BT3_UWP
+    if(sBackend==&sDirect3D11Backend)return 1;
+#endif
 #endif
     return 0;
 }
@@ -2829,7 +2838,7 @@ static int scale_apply(void) {
     gsPendingScale = 0;
     sBackend->scaleChanged();
     gsTargetCount = 0;
-    fprintf(stderr, "bt3: internal resolution %dx (%d x %d)\n", gsScale, 512 * gsScale, 448 * gsScale);
+    fprintf(stderr, "bt3: internal resolution %.2fx (%d x %d)\n", (double)gsScale, (int)(512 * gsScale), (int)(448 * gsScale));
     return 1;
 }
 
@@ -2876,6 +2885,16 @@ SDL_Window *GsDraw_WindowCreate(int opengl) {
     sDisplaySetting = Port_Setting("display", 0);
     pick = getenv("BT3_DISPLAY") != NULL ? atoi(getenv("BT3_DISPLAY")) : sDisplaySetting;
     sFullscreen = (getenv("BT3_FULLSCREEN") != NULL ? atoi(getenv("BT3_FULLSCREEN")) : Port_Setting("fullscreen", 0)) != 0;
+    if (!sFullscreen && !getenv("BT3_WINDOW") && !getenv("BT4_RENDER_TEST")) {
+        int percent = Port_Setting("window_percent", 0);
+        SDL_Rect usable;
+        SDL_DisplayID display = pick >= 1 && pick <= count ? displays[pick - 1] : SDL_GetPrimaryDisplay();
+        if ((percent == 50 || percent == 75 || percent == 100) && SDL_GetDisplayUsableBounds(display, &usable)) {
+            h = (int)fminf(usable.h * percent / 100.0f, usable.w * percent / (100.0f * want));
+            if (h < 240) h = 240;
+            w = (int)(h * want + .5f);
+        }
+    }
     sWantAspect = want;
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "BT4decomp");
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, w);
@@ -2912,7 +2931,7 @@ SDL_Window *GsDraw_WindowCreate(int opengl) {
     if (sWindow != NULL && !sFullscreen) {
         SDL_SetWindowSize(sWindow, (int)((float)h * want + 0.5f), h); /* (the height BT3_WINDOW asked for, at the picture's shape) */
     }
-    fprintf(stderr, "bt3: internal resolution %dx (%d x %d)\n", gsScale, 512 * gsScale, 448 * gsScale);
+    fprintf(stderr, "bt3: internal resolution %.2fx (%d x %d)\n", (double)gsScale, (int)(512 * gsScale), (int)(448 * gsScale));
     return sWindow;
 }
 
@@ -2958,6 +2977,8 @@ int Port_FxOff(int bit) {
 
 void GsGpu_GetSettings(PortVideo *v) {
     v->scale = sOnlineQualityScale>=0?sOnlineQualityScale:(gsPendingScale ? gsPendingScale : gsScale);
+    v->performance = sPerformanceMode;
+    v->windowPercent = Port_Setting("window_percent", 0);
     v->aspectMilli = Port_AspectMilli();
     v->fullscreen = sFullscreen;
     v->fxOff = (int)gsFxOff;
@@ -2982,16 +3003,31 @@ void GsGpu_GetSettings(PortVideo *v) {
 
 /* Applies what differs from the current state, all of it at once, and keeps it for the next run. */
 void GsGpu_SetSettings(const PortVideo *v) {
-    PortVideo limited;
-    if (sPerformanceMode) {
-        limited = *v; limited.scale = 1; limited.fxOff |= 1 | 2 | 32;
-        limited.glow = 15; limited.glare = 0; limited.sharpBlur = 0; limited.texPack = 0;
-        v = &limited;
-    }
-    PortVideo now;
+    PortVideo adjusted, now;
     GsGpu_GetSettings(&now);
+    if (!!v->performance != sPerformanceMode) {
+        adjusted = *v;
+        if (v->performance) {
+            Port_SettingSave("quality_scale_percent", (int)(now.scale * 100.0f + .5f));
+            Port_SettingSave("quality_fx_off", now.fxOff);
+            Port_SettingSave("quality_glow", now.glow);
+            Port_SettingSave("quality_glare", now.glare);
+            Port_SettingSave("quality_sharp_blur", now.sharpBlur);
+            adjusted.scale = now.scale < 1.0f ? now.scale : 1.0f;
+            adjusted.fxOff |= 8 | 16 | 32 | 64; /* post-processing and weather; never remove attacks */
+            adjusted.glow = 30; adjusted.glare = 0; adjusted.sharpBlur = 0;
+        } else {
+            adjusted.scale = Port_Setting("quality_scale_percent", 200) / 100.0f;
+            adjusted.fxOff = Port_Setting("quality_fx_off", 0);
+            adjusted.glow = Port_Setting("quality_glow", GLOW_DEFAULT);
+            adjusted.glare = Port_Setting("quality_glare", GLOW_DEFAULT);
+            adjusted.sharpBlur = Port_Setting("quality_sharp_blur", 1);
+        }
+        sPerformanceMode = !!v->performance;
+        v = &adjusted;
+    }
     if (v->scale != now.scale) {
-        int requested=v->scale<1?1:v->scale>8?8:v->scale;
+        float requested = v->scale <= .5f ? .5f : v->scale < 1.0f ? .75f : v->scale > 8.0f ? 8.0f : (float)(int)v->scale;
         if(sOnlineQualityScale>=0){sOnlineQualityScale=requested;gsPendingScale=requested;}
         else gsPendingScale=requested; /* applied between two frames */
     }
@@ -3026,6 +3062,16 @@ void GsGpu_SetSettings(const PortVideo *v) {
 #endif
         Port_SettingSave("vsync", v->vsync);
     }
+    if (v->windowPercent != now.windowPercent && sWindow && !sFullscreen && !getenv("BT4_RENDER_TEST")) {
+        int percent = v->windowPercent == 50 || v->windowPercent == 75 || v->windowPercent == 100 ? v->windowPercent : 0;
+        SDL_Rect usable;
+        if (percent && SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(sWindow), &usable)) {
+            int h = (int)fminf(usable.h * percent / 100.0f, usable.w * percent / (100.0f * sWantAspect));
+            if (h < 240) h = 240;
+            SDL_SetWindowSize(sWindow, (int)(h * sWantAspect + .5f), h);
+        }
+        Port_SettingSave("window_percent", percent);
+    }
     sDisplaySetting = v->display;
     sTexPackOn = v->texPack != 0;
     MenuText_SetFont(v->menuFont);
@@ -3036,14 +3082,17 @@ void GsGpu_SetSettings(const PortVideo *v) {
     Port_SettingSave("menu_font_id", MenuText_FontIdToSave());
     sSmooth2d = v->smooth2d != 0;
     Port_SettingSave("smooth_2d", sSmooth2d);
-    if (!sPerformanceMode) Port_SettingSave("texture_pack", sTexPackOn);
-    if (!sPerformanceMode) Port_SettingSave("scale", sOnlineQualityScale>=0?sOnlineQualityScale:(gsPendingScale ? gsPendingScale : gsScale));
+    Port_SettingSave("texture_pack", sTexPackOn);
+    float chosenScale = sOnlineQualityScale >= 0 ? sOnlineQualityScale : (gsPendingScale ? gsPendingScale : gsScale);
+    Port_SettingSave("scale_percent", (int)(chosenScale * 100.0f + .5f));
+    Port_SettingSave("scale", (int)ceilf(chosenScale)); /* older clients keep a valid preference */
+    Port_SettingSave("performance_mode", sPerformanceMode);
     Port_SettingSave("aspect_milli", Port_AspectMilli());
     Port_SettingSave("fullscreen", sFullscreen);
-    if (!sPerformanceMode) Port_SettingSave("fx_off", (int)gsFxOff);
-    if (!sPerformanceMode) Port_SettingSave("glow", gsGlowPercent);
-    if (!sPerformanceMode) Port_SettingSave("glare", gsGlarePercent);
-    if (!sPerformanceMode) Port_SettingSave("sharp_blur", gsSharpBlur);
+    Port_SettingSave("fx_off", (int)gsFxOff);
+    Port_SettingSave("glow", gsGlowPercent);
+    Port_SettingSave("glare", gsGlarePercent);
+    Port_SettingSave("sharp_blur", gsSharpBlur);
     Port_SettingSave("music", gPortMusicPercent);
     Port_SettingSave("effects", gPortSePercent);
     Port_SettingSave("voices", gPortVoicePercent);
@@ -3060,8 +3109,9 @@ int GsGpu_Init(void) {
 #endif
     GsBackend *sb;
 
-    gsScale = getenv("BT3_SCALE") != NULL ? atoi(getenv("BT3_SCALE")) : Port_Setting("scale", 2);
-    gsScale = gsScale < 1 ? 1 : gsScale > 8 ? 8 : gsScale;
+    gsScale = getenv("BT3_SCALE") != NULL ? (float)atof(getenv("BT3_SCALE")) : Port_Setting("scale_percent", Port_Setting("scale", 2) * 100) / 100.0f;
+    gsScale = !isfinite(gsScale) || gsScale <= 0 ? 2.0f : gsScale <= .5f ? .5f : gsScale < 1.0f ? .75f : gsScale > 8 ? 8 : (float)(int)gsScale;
+    sPerformanceMode = Port_Setting("performance_mode", 0) != 0;
     gsPendingScale = 0;
     gsVerts = malloc(MAX_VERTS * sizeof(Vtx));
     gsVuVerts = malloc(MAX_VU_VERTS * 48);
@@ -3074,7 +3124,14 @@ int GsGpu_Init(void) {
         sb = saved == 1 ? &sGlBackend : &sVulkanBackend;
 #ifdef _WIN32
         if (saved == 2) { sb = &sDirect3D12Backend; }
-        if (saved == 3 || saved == 4) {
+        if (saved == 3) {
+#ifdef BT3_UWP
+            sb = &sDirect3D12Backend;
+#else
+            sb = &sDirect3D11Backend;
+#endif
+        }
+        if (saved == 4) {
             sb=&sDirect3D12Backend;Port_SettingSave("gpu_api",2);Port_SettingsWrite();
             fprintf(stderr,"bt4: retired DirectX preference migrated to DirectX 12\n");
         }
@@ -3088,22 +3145,23 @@ int GsGpu_Init(void) {
     } else if (strcmp(api, "dx9") == 0 || strcmp(api, "direct3d9") == 0) {
         sb = &sDirect3D12Backend; /* retired legacy request */
     } else if (strcmp(api, "dx11") == 0 || strcmp(api, "direct3d11") == 0) {
-        sb = &sDirect3D12Backend; /* retired legacy request */
+#ifdef BT3_UWP
+        sb = &sDirect3D12Backend;
+#else
+        sb = &sDirect3D11Backend;
+#endif
     } else if (strcmp(api, "dx12") == 0 || strcmp(api, "direct3d12") == 0) {
         sb = &sDirect3D12Backend;
 #endif
     } else {
-        fprintf(stderr, "bt3: unknown BT3_GPU_API=%s (try vulkan, gl, dx12 or auto)\n", api);
+        fprintf(stderr, "bt3: unknown BT3_GPU_API=%s (try vulkan, gl, dx11, dx12 or auto)\n", api);
         return 0;
     }
-    int qualityScale = gsScale;
-#ifdef _WIN32
-    sPerformanceMode = sb == &sDirect3D9Backend && !getenv("BT4_DX9_QUALITY_TEST");
-    if (sPerformanceMode) gsScale = 1;
-#endif
+    float qualityScale = gsScale;
+
     sBackend = sb;
     if (!sb->init()) {
-        gsScale = qualityScale; sPerformanceMode = 0;
+        gsScale = qualityScale;
         sBackend = NULL;
         if (api != NULL) { return 0; }
         if (sb != &sVulkanBackend) {
@@ -3129,12 +3187,6 @@ renderer_ready:
     MenuText_SetSharedFontId(Port_Setting("text_font_id", 0));
     sTexPackOn = Port_Setting("texture_pack", 1) != 0;
     sSmooth2d = getenv("BT3_2D_SMOOTH") != NULL ? atoi(getenv("BT3_2D_SMOOTH")) != 0 : Port_Setting("smooth_2d", 1) != 0;
-    if (sPerformanceMode) {
-        extern int gsInterp; gsInterp = 0;
-        gsFxOff |= 1u | 2u | 32u; /* outline, glare, camera blur; keep attack effects */
-        gsGlowPercent = 15; gsGlarePercent = 0; gsSharpBlur = 0;
-        fprintf(stderr,"bt4: DX9 Performance: scale=1 outline=off glare=off camera-blur=off texture-pack=%s\n",sTexPackOn?"on":"off");
-    }
     gPortMusicPercent = Port_Setting("music", 100);
     gPortSePercent = Port_Setting("effects", 100);
 
@@ -3182,9 +3234,11 @@ static uint32_t sInterpPrevCount;
 static int sInterpNext;  /* the tick's next picture still to be shown (2..sInterpSteps), 0 = none */
 static int sInterpRepeat; /* the tick could not be blended (a camera cut): its pictures are its own, shown again */
 static int sInterpSteps = 2;
+static int sInterpUnlimited; /* immutable for the scheduled list, even if F1 changes its next setting */
 static unsigned sInterpLastBlank;
 static uint64_t sInterpTickNs = 33366700ull; /* how long the tick being shown lasts */
 static unsigned gInterpTicks;
+static uint64_t sInterpClockStarted;
 static uint64_t sInterpBlendShown, sInterpBlendTook; /* when the in-between picture was handed to the screen; how long replaying its list took */
 static struct { uint32_t verts, vuVerts, vuIdx, vuUni, draws; int anchor; unsigned skipped, native; unsigned tdraws[MAX_TARGETS]; } sInterpSaved;
 unsigned gInterpShown, gInterpSkipped; /* in-between pictures shown / left out since the start */
@@ -4313,6 +4367,19 @@ static Vtx *sInterpPrevVerts, *sInterpBlendVerts;
 static InterpPrim *sInterpPrevPrims, *sInterpPrims;
 static uint32_t sInterpPrevPrimCount, sInterpPrimCount, sInterpPrevVertCount;
 static uint8_t *sInterpPrimUsed;
+/* Correspondence is a property of two native pictures, not their blend time.
+   Keep only the previous XYZ endpoint and whether this piece follows the
+   camera. Capacity follows actual geometry, bounded by the existing maxima. */
+typedef struct InterpEndpoint { float x, y, z; } InterpEndpoint;
+static InterpEndpoint *sInterpPlanPoint;
+static uint8_t *sInterpPlanMode; /* 0: unchanged, 1: paired, 2: camera */
+static int16_t *sInterpPlanView;
+static uint32_t sInterpPlanPointCap, sInterpPlanModeCap, sInterpPlanVerts, sInterpPlanPrims;
+static unsigned sInterpPlanFrame = ~0u;
+static int sInterpPlanBuilding;
+static Vtx *sInterpPlanCheck;
+static uint32_t sInterpPlanCheckCap;
+
 static unsigned gInterpTris, gInterpTrisBlended, gInterpTrisCamera;
 
 /* Where a vertex the game transformed itself was one picture earlier if the thing it belongs to stood still: back to
@@ -4422,6 +4489,14 @@ static int interp_piece_camera(const InterpPrim *c, float t) {
         }
         if (!found) {
             return 0;
+        }
+    }
+    if (sInterpPlanBuilding) {
+        uint32_t piece = (uint32_t)(c - sInterpPrims);
+        sInterpPlanMode[piece] = 2;
+        sInterpPlanView[piece] = (int16_t)sInterpViewLoaded;
+        for (k = 0; k < nv; k++) {
+            sInterpPlanPoint[c->first + k] = (InterpEndpoint){x[k], y[k], z[k]};
         }
     }
     for (k = 0; k < nv; k++) {
@@ -4993,10 +5068,81 @@ static void interp_wall_into_locked(float t, Vtx *buf, int test) {
     }
 }
 
+static int interp_plan_reserve(void) {
+    if (gsVertCount > MAX_VERTS || sInterpPrimCount > INTERP_MAX_PRIMS) {
+        return 0;
+    }
+    if (gsVertCount > sInterpPlanPointCap) {
+        uint32_t n = gsVertCount;
+        void *p = realloc(sInterpPlanPoint, (size_t)n * sizeof(InterpEndpoint));
+        if (!p) { return 0; }
+        sInterpPlanPoint = p;
+        sInterpPlanPointCap = n;
+    }
+    if (sInterpPrimCount > sInterpPlanModeCap) {
+        uint32_t n = sInterpPrimCount;
+        void *p = realloc(sInterpPlanMode, n);
+        if (!p) { return 0; }
+        sInterpPlanMode = p;
+        p = realloc(sInterpPlanView, (size_t)n * sizeof(*sInterpPlanView));
+        if (!p) { return 0; }
+        sInterpPlanView = p;
+        sInterpPlanModeCap = n;
+    }
+    return 1;
+}
+
+static void interp_plan_apply(float t) {
+    memcpy(sInterpBlendVerts, gsVerts, gsVertCount * sizeof(Vtx));
+    for (uint32_t i = 0; i < sInterpPrimCount; i++) {
+        int mode = sInterpPlanMode[i];
+        const InterpPrim *c = &sInterpPrims[i];
+        if (!mode) { continue; }
+        if (mode == 2) {
+            int view = sInterpPlanView[i];
+            /* Preserve the reference group's camera, including groups whose
+               hash covers more than one scissor. Paired motion needs none. */
+            if (view >= 0 && view < sInterpViewCount) {
+                interp_view_load(&sInterpViews[view]);
+                sInterpViewLoaded = view;
+            } else {
+                sInterpHaveDt = 0;
+            }
+        }
+        int nv = c->tris * 3;
+        for (int k = 0; k < nv; k++) {
+            const Vtx *v = &gsVerts[c->first + k];
+            Vtx *o = &sInterpBlendVerts[c->first + k];
+            const InterpEndpoint *p = &sInterpPlanPoint[c->first + k];
+            float x, y, z;
+            if (mode == 2 && sInterpHaveDt && interp_reproject_with(sInterpDt, v, &x, &y, &z)) {
+                o->x = x; o->y = y; o->z = z;
+            } else {
+                o->x = p->x + (v->x - p->x) * t;
+                o->y = p->y + (v->y - p->y) * t;
+                o->z = p->z + (v->z - p->z) * t;
+            }
+        }
+    }
+}
+
 static void interp_build_verts(float t) {
     uint32_t i, lo = 0;
     int staticKind = 0;
     static unsigned forFrame = ~0u;
+    int plan=getenv("BT3_INTERP_CACHE_OFF")==NULL && interp_plan_reserve();
+    int verify=0;
+    if(plan && sInterpPlanFrame==gGsFrame && sInterpPlanVerts==gsVertCount && sInterpPlanPrims==sInterpPrimCount) {
+        interp_plan_apply(t);
+        if(!getenv("BT4_RENDER_TEST") || !getenv("BT4_INTERP_CACHE_VERIFY"))return;
+        if(gsVertCount>sInterpPlanCheckCap) {
+            void *p=realloc(sInterpPlanCheck,gsVertCount*sizeof(Vtx));
+            if(p){sInterpPlanCheck=p;sInterpPlanCheckCap=gsVertCount;}
+        }
+        if(sInterpPlanCheckCap>=gsVertCount){memcpy(sInterpPlanCheck,sInterpBlendVerts,gsVertCount*sizeof(Vtx));verify=1;}
+    }
+    sInterpPlanFrame=~0u;sInterpPlanBuilding=plan;
+    if(plan && sInterpPrimCount)memset(sInterpPlanMode,0,sInterpPrimCount);
 
     if (forFrame != gGsFrame) {
         forFrame = gGsFrame;
@@ -5241,6 +5387,10 @@ static void interp_build_verts(float t) {
                     bestD += fabsf(pv[k].x - cv[k].x) + fabsf(pv[k].y - cv[k].y);
                 }
                 if (bestD != 0.0f) {
+                    if(plan) {
+                        sInterpPlanMode[i+r]=1;
+                        for(k=0;k<nv;k++)sInterpPlanPoint[c->first+k]=(InterpEndpoint){pv[k].x,pv[k].y,pv[k].z};
+                    }
                     for (k = 0; k < nv; k++) {
                         ov[k].x = pv[k].x + (cv[k].x - pv[k].x) * t;
                         ov[k].y = pv[k].y + (cv[k].y - pv[k].y) * t;
@@ -5263,6 +5413,22 @@ static void interp_build_verts(float t) {
         i = end;
         lo = pEnd;
     }
+    sInterpPlanBuilding=0;
+    if(plan){sInterpPlanFrame=gGsFrame;sInterpPlanVerts=gsVertCount;sInterpPlanPrims=sInterpPrimCount;}
+    if(verify) {
+        int equal=memcmp(sInterpPlanCheck,sInterpBlendVerts,gsVertCount*sizeof(Vtx))==0;
+        if(!equal || gGsFrame%30==0)fprintf(stderr,"interp cache verify: frame=%u vertices=%u equal=%d\n",gGsFrame,gsVertCount,equal);
+        if(!equal){
+            for(uint32_t j=0;j<gsVertCount;j++)if(memcmp(&sInterpPlanCheck[j],&sInterpBlendVerts[j],sizeof(Vtx))){
+                Vtx *a=&sInterpPlanCheck[j],*b=&sInterpBlendVerts[j];
+                fprintf(stderr,"interp cache mismatch vertex=%u fast=%.9g,%.9g,%.9g reference=%.9g,%.9g,%.9g time=%.9g\n",j,a->x,a->y,a->z,b->x,b->y,b->z,t);
+                for(uint32_t z=0;z<sInterpPrimCount;z++)if(j>=sInterpPrims[z].first && j<sInterpPrims[z].first+sInterpPrims[z].tris*3)fprintf(stderr,"  piece=%u view=%u mode=%u current=%.9g,%.9g endpoint=%.9g,%.9g\n",z,sInterpPrims[z].view,sInterpPlanMode[z],gsVerts[j].x,gsVerts[j].y,sInterpPlanPoint[j].x,sInterpPlanPoint[j].y);
+                break;
+            }
+            exit(97); /* Test-only failure, without an assertion dialog. */
+        }
+    }
+
 }
 
 static void interp_remember(void) {
@@ -5303,14 +5469,15 @@ static void interp_present_log(char kind) {
 }
 
 /* How many pictures a tick is shown as: 1 = the game's own (30 a second), 2 = one in-between picture (60), 4 = three
-   (120), 8 = seven (240). The setting "interp" is 0..3. */
+   (120), 8 = seven (240). The setting "interp" is 0..4; 4 replays until the next simulation deadline, with no FPS cap. */
 static int interp_steps(void) {
-    return gsInterp <= 0 ? 1 : gsInterp == 1 ? 2 : gsInterp == 2 ? 4 : 8;
+    return gsInterp <= 0 ? 1 : gsInterp == 1 ? 2 : gsInterp == 2 ? 4 : gsInterp == 3 ? 8 : 0x7fffffff;
 }
 
 /* Changing resolution retires attachments used by every saved picture.
  * Do not replay that picture, or pair its geometry with the next resolution. */
 static void interp_scale_changed(void) {
+    sInterpPlanFrame=~0u;
     sInterpNext = 0;
     sInterpRepeat = 0;
     sInterpPrevCount = 0;
@@ -5342,6 +5509,7 @@ static void interp_counts_restore(void) {
    takes, smoothed; sInterpCap: the most pictures a 33 ms tick may have now (8, 4, 2 or 1). */
 static uint64_t sInterpCostNs;
 static void interp_forget(void) {
+    sInterpPlanFrame=~0u;
     sInterpNext = sInterpPrevCount = sInterpPrevPrimCount = sInterpPrevVertCount = 0;
     sInterpHaveCam = sInterpHaveD = sInterpHaveDt = 0;
     sInterpViewCount = 0;
@@ -5366,6 +5534,9 @@ static void interp_cost(uint64_t ns) {
         ns = 100000000ull;
     }
     sInterpCostNs = sInterpCostNs == 0 ? ns : (sInterpCostNs * 7 + ns) / 8;
+    if (gsInterp == 4) {
+        return; /* Deadline-driven presentation never selects a fixed FPS cap. */
+    }
     if (getenv("BT3_INTERP_NOCAP") != NULL) {
         return;
     }
@@ -5404,7 +5575,8 @@ static void interp_show(int step) {
     if (step < sInterpSteps) {
         Vu0Uniform *real = gsVuUni;
         Vtx *realVerts = gsVerts;
-        float t = getenv("BT3_INTERP_T") != NULL ? (float)atof(getenv("BT3_INTERP_T")) : (float)step / (float)sInterpSteps;
+        float t = getenv("BT3_INTERP_T") != NULL ? (float)atof(getenv("BT3_INTERP_T")) :
+            sInterpUnlimited ? GsPresent_UnlimitedTime(gpu_now(),sInterpClockStarted,sInterpTickNs) : (float)step / (float)sInterpSteps;
 
         if (step > 1) {
             interp_build(t, 0); /* (the first was built to decide whether the tick can be blended at all) */
@@ -5484,22 +5656,34 @@ void GsGpu_InterpHurry(int on) { /* (1 from the game's thread; 0 by the render t
                                     the list it is running, not one that comes after it) */
     __atomic_store_n(&sInterpHurry, on, __ATOMIC_RELEASE);
 }
+void GsGpu_InterpPreempt(void) {
+    /* Immediate GS calls need the same resources as replay. Unlimited extra
+       pictures must yield to those calls instead of extending a game tick. */
+    if (!Gs_RenderThreaded()) {
+        GsGpu_InterpPump(0, 1);
+    } else if (__atomic_load_n(&sInterpUnlimited,__ATOMIC_ACQUIRE)) {
+        GsGpu_InterpHurry(1);
+    }
+}
 void GsGpu_InterpRun(void) {
     extern void PortInput_Pump(void); /* gs_input.c: the window's events (the window is this thread's) */
     while (sInterpNext != 0 && sBackend != NULL) {
         uint64_t due = interp_due(), now;
-        if (getenv("BT3_UNCAPPED") == NULL) {
+        if (!sInterpUnlimited && getenv("BT3_UNCAPPED") == NULL) {
             while ((now = gpu_now()) < due && !__atomic_load_n(&sInterpHurry, __ATOMIC_ACQUIRE)) {
                 SDL_DelayPrecise(due - now < 1000000ull ? due - now : 1000000ull); /* (a millisecond at a time: a hurry is seen) */
                 PortInput_Pump();
             }
         }
-        if (__atomic_load_n(&sInterpHurry, __ATOMIC_ACQUIRE)) {
+        if (__atomic_load_n(&sInterpHurry, __ATOMIC_ACQUIRE) ||
+            (sInterpUnlimited && GsPresent_UnlimitedDone(gpu_now(),sInterpClockStarted,sInterpTickNs,sInterpBlendTook,0))) {
             sInterpNext = sInterpSteps; /* the game is back with its next tick: what is left is dropped, but the real picture */
         }
+        uint64_t replayBegan=gpu_now();
         if (!interp_show_next()) {
             break;
         }
+        if(sInterpUnlimited)sInterpBlendTook=gpu_now()-replayBegan;
     }
     __atomic_store_n(&sInterpHurry, 0, __ATOMIC_RELEASE);
 }
@@ -5522,9 +5706,17 @@ void GsGpu_InterpPump(int ahead_ms, int all) {
     while (sInterpNext != 0) {
         uint64_t due = interp_due(), now = gpu_now();
 
+        if (sInterpUnlimited && !all) {
+            extern int Port_VBlankUsLeft(void);
+            uint64_t left = (uint64_t)Port_VBlankUsLeft() * 1000ull;
+            /* The same thread also advances input, sound and online play.
+               Never spend their next vertical blank on extra presentation. */
+            if (ahead_ms < 0 && left < sInterpBlendTook * 2 + 700000ull) return;
+            if (GsPresent_UnlimitedDone(now,sInterpClockStarted,sInterpTickNs,sInterpBlendTook,0)) all = 1;
+        }
         if (all) {
             sInterpNext = sInterpSteps;
-        } else if (getenv("BT3_UNCAPPED") == NULL) {
+        } else if (!sInterpUnlimited && getenv("BT3_UNCAPPED") == NULL) {
             if (ahead_ms < 0) {
                 /* before a vertical blank: only a picture that is shown and done with before the blank is due,
                    so that the blank (the game's clock: input, sound) is never made late */
@@ -5540,9 +5732,12 @@ void GsGpu_InterpPump(int ahead_ms, int all) {
                 SDL_DelayPrecise(due - now);
             }
         }
+        uint64_t replayBegan=gpu_now();
         if (!interp_show_next()) {
             return;
         }
+        if(sInterpUnlimited)sInterpBlendTook=gpu_now()-replayBegan;
+        if (sInterpUnlimited && ahead_ms >= 0 && !all) return;
     }
 }
 
@@ -5646,8 +5841,8 @@ void GsGpu_FrameEnd(void) {
         }
         if (gsInterp < 0) {
             /* An explicit native-30 choice is not an obsolete profile. */
-            gsInterp = getenv("BT3_INTERP") != NULL ? atoi(getenv("BT3_INTERP")) : Port_Setting("interp", 1);
-            gsInterp = gsInterp < 0 ? 0 : gsInterp > 3 ? 3 : gsInterp;
+            gsInterp = getenv("BT3_INTERP") != NULL ? atoi(getenv("BT3_INTERP")) : Port_Setting("interp", 4);
+            gsInterp = gsInterp < 0 ? 0 : gsInterp > 4 ? 4 : gsInterp;
         }
         /* Allocate the interpolation history only when it is actually enabled,
            including when enabled later from F1. Native rendering needs none. */
@@ -5680,12 +5875,21 @@ void GsGpu_FrameEnd(void) {
             unsigned blanks = gPortVBlanks - sInterpLastBlank;
             sInterpLastBlank = gPortVBlanks;
             blanks = blanks < 1 ? 1 : blanks > 2 ? 2 : blanks;
-            sInterpSteps = (interp_steps() < sInterpCap ? interp_steps() : sInterpCap) * (int)blanks / 2;
+            __atomic_store_n(&sInterpUnlimited,gsInterp == 4,__ATOMIC_RELEASE);
+            sInterpSteps = sInterpUnlimited ? 0x7fffffff :
+                (interp_steps() < sInterpCap ? interp_steps() : sInterpCap) * (int)blanks / 2;
+            if (!getenv("BT4_RENDER_TEST") && sWindow &&
+                (SDL_GetWindowFlags(sWindow) & (SDL_WINDOW_HIDDEN|SDL_WINDOW_MINIMIZED))) {
+                sInterpSteps=1; /* Nothing visible needs extra presentation; simulation continues normally. */
+            }
             sInterpTickNs = (uint64_t)blanks * Port_BlankNs();
         }
         if (gsInterp > 0) {
             interp_signatures(sInterpSig);
             sInterpPrimCount = interp_prims(sInterpPrims);
+            /* Each recorded list owns a plan, even when two lists share the
+               profiling frame number (for example during scene transitions). */
+            sInterpPlanFrame = ~0u;
         }
         if (gsInterp > 0 && sInterpSteps > 1 && interp_build(getenv("BT3_INTERP_T") != NULL ? (float)atof(getenv("BT3_INTERP_T")) : 1.0f / (float)sInterpSteps, 1)) {
             uint64_t before;
@@ -5702,11 +5906,12 @@ void GsGpu_FrameEnd(void) {
                 sInterpSaved.tdraws[i] = gsTargets[i].draws;
             }
             before = gpu_now();
+            sInterpClockStarted = before;
             sInterpRepeat = 0; /* (a blendable tick: its pictures are blends) */
             interp_show(1); /* the first in-between picture; the others and the real one follow (GsGpu_InterpPump) */
             sInterpBlendShown = gpu_now();
             sInterpBlendTook = sInterpBlendShown - before;
-            if (sInterpBlendTook > 4000000ull) {
+            if (!sInterpUnlimited && sInterpBlendTook > 4000000ull) {
                 sInterpBlendTook = 4000000ull;
             }
             sInterpNext = 2;
@@ -5747,6 +5952,7 @@ void GsGpu_FrameEnd(void) {
                 }
             }
             t1 = gpu_now();
+            sInterpClockStarted = t1;
             sBackend->frameEnd();
             interp_cost(gpu_now() - t1);
             interp_present_log('S');
@@ -5755,7 +5961,7 @@ void GsGpu_FrameEnd(void) {
             menu_labels_apply();
             if (repeat && !resized) {
                 sInterpBlendShown = gpu_now();
-                sInterpBlendTook = sInterpBlendShown - t1 < 4000000ull ? sInterpBlendShown - t1 : 4000000ull;
+                sInterpBlendTook = sInterpUnlimited || sInterpBlendShown - t1 < 4000000ull ? sInterpBlendShown - t1 : 4000000ull;
                 sInterpRepeat = 1;
                 sInterpNext = 2;
             }

@@ -1,6 +1,8 @@
-# BT4 Tag Team for Xbox Dev Mode
+# BT4decomp 0.1.39.5 R5 1.7 for Xbox Dev Mode
 
 UWP port of [DBZ BT4 Tag Team Decomp](https://github.com/NauTaro/DBZ-BT4-Tag-Team-Decomp).
+
+UWP package version: 0.1.39.8.
 
 ## Install game data
 

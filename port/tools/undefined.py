@@ -20,6 +20,7 @@ MAC_FLAGS = ["-fno-vectorize", "-fno-slp-vectorize", "-Wno-error=return-mismatch
 MAC_IR = ["-Xclang", "-disable-llvm-passes"]  # the window pass sees the code as written ((u32)p is still a ptrtoint and a
 # trunc, not folded into a shift or a mask); macwin.run optimises after it
 MAC_LLC = ["-mtriple=arm64-apple-macos11", "-mattr=-fp-armv8,-neon", "-relocation-model=pic"]
+DEVELOPMENT_FLAGS = ["-DBT4_DEVELOPMENT_BUILD"] if os.environ.get("BT4_DEVELOPMENT_BUILD") == "1" else []
 
 def variant(cmd):
     """The command for this build variant: clang for everything built with software float, 64-bit or Windows flags."""
@@ -27,20 +28,20 @@ def variant(cmd):
         soft = "-msoft-float" in cmd
         cc = llvm("clang++" if cmd[0] == "g++" else "clang") if soft else ("clang++" if cmd[0] == "g++" else "clang")
         target = CLANG_TARGET if soft else ["-arch", "arm64", "-mmacosx-version-min=11.0", f"-I{os.environ.get('BT3_SDL3', '/opt/homebrew/opt/sdl3')}/include"]
-        return [cc] + target + [f"-I{os.environ.get('BT3_CURL', '/opt/homebrew/opt/curl')}/include"] + [a for a in cmd[1:] if a not in MAC_DROP] + (["-fms-extensions"] + MAC_FLAGS if soft else [])
+        return [cc] + target + [f"-I{os.environ.get('BT3_CURL', '/opt/homebrew/opt/curl')}/include"] + [a for a in cmd[1:] if a not in MAC_DROP] + DEVELOPMENT_FLAGS + (["-fms-extensions"] + MAC_FLAGS if soft else [])
     if BITS64:
         cmd = ["-m64" if a == "-m32" else a for a in cmd if a != "-malign-double"]
     if WIN:
         cmd = [a for a in cmd if a != "-m64"]
         inc = [f"-I{sdl3() / 'include'}"] if sdl3() else []
         if cmd[0] in ("gcc", "g++") and "-msoft-float" not in cmd:  # the renderer, the settings window: the Windows gcc
-            return [PREFIX + cmd[0]] + cmd[1:] + inc
+            return [PREFIX + cmd[0]] + cmd[1:] + inc + DEVELOPMENT_FLAGS
     if VARIANT == "gcc" or "-msoft-float" not in cmd:
-        return cmd
+        return cmd + DEVELOPMENT_FLAGS
     extra = ["-fms-extensions"] if BITS64 else []
     if WIN:  # GCC's structure layout, not Microsoft's bit-field rules: the game's structures are the PS2's
         extra += ["-mno-ms-bitfields", "-D__CRT__NO_INLINE"]  # (no inline maths of the headers: they use long double) + ([f"-I{sdl3() / 'include'}"] if sdl3() else [])
-    return ["clang"] + CLANG_TARGET + cmd[1:] + ["-mno-x87", "-Wno-error=return-mismatch"] + extra
+    return ["clang"] + CLANG_TARGET + cmd[1:] + ["-mno-x87", "-Wno-error=return-mismatch"] + extra + DEVELOPMENT_FLAGS
 
 def run(cmd, **kw):
     if MAC and "-msoft-float" in cmd:  # software float on arm64 is a code-generator option: through IR and llc
@@ -252,6 +253,8 @@ def main():
     (gen / "shaders.h").write_text("/* generated from port/src/gs/shaders by port/tools/undefined.py */\n" + "".join(arrays))
     import dx12_shaders
     dx12_shaders.prepare(ROOT, gen, WIN)
+    import d3d11_shaders
+    d3d11_shaders.prepare(ROOT, gen, WIN)
     import d3d9_shaders
     d3d9_shaders.prepare(ROOT, gen, WIN)
     for f in sorted((ROOT / "port/src/gs").glob("*.c")):
@@ -268,7 +271,7 @@ def main():
     # an object of the library built before it was given lacks them (delete port/build/obj/cxx_imgui*.o once).
     imgui = ROOT / "port/third_party/imgui"
     for f in sorted(imgui.glob("*.cpp")) + sorted((ROOT / "port/src/gs").glob("*.cpp")):
-        if f.name == "imgui_impl_dx9.cpp" and not WIN:
+        if f.name in ("imgui_impl_dx9.cpp", "imgui_impl_dx11.cpp") and not WIN:
             continue
         o = OBJ / ("cxx_" + f.stem + ".o")
         if f.parent == imgui and o.exists() and o.stat().st_mtime > f.stat().st_mtime:

@@ -1,11 +1,46 @@
 #include "storage.h"
 #include "installer.h"
+#include "include/uwp_stdio.h"
 
+#include <cstdio>
 #include <filesystem>
-#include <fstream>
+#include <future>
 #include <string>
+#include <vector>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.System.Profile.h>
+
+namespace {
+std::string read_choice(const std::filesystem::path &path) {
+    FILE *file = PortUwp_Fopen(path.string().c_str(), "rb");
+    if (!file) return {};
+    char text[1024] = {};
+    const bool read = fgets(text, sizeof(text), file) != nullptr;
+    fclose(file);
+    if (!read) return {};
+    std::string choice(text);
+    while (!choice.empty() && (choice.back() == '\r' || choice.back() == '\n')) choice.pop_back();
+    return choice;
+}
+
+void save_choice(const std::filesystem::path &path, const std::string &choice) {
+    FILE *file = PortUwp_Fopen(path.string().c_str(), "wb");
+    if (!file) return;
+    fprintf(file, "%s\n", choice.c_str());
+    fclose(file);
+}
+
+std::vector<std::string> removable_roots() {
+    return std::async(std::launch::async, [] {
+        std::vector<std::string> roots;
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        const auto folders = winrt::Windows::Storage::KnownFolders::RemovableDevices().GetFoldersAsync().get();
+        for (const auto &folder : folders) roots.push_back(winrt::to_string(folder.Path()));
+        return roots;
+    }).get();
+}
+}
 
 extern "C" int PortUwp_InitStorage(void) {
     PortUwp_Trace("BT4 startup: resolving storage");
@@ -16,12 +51,25 @@ extern "C" int PortUwp_InitStorage(void) {
             (std::filesystem::path(app_local) / "BT4").string();
         PortUwp_Trace((std::string("Device: ") + (xbox ? "Xbox" : "Windows") + "; LocalFolder: " + app_local).c_str());
         PortUwp_Trace((std::string("Internal BT4: ") + local).c_str());
-        std::string external;
-        std::ifstream choice(std::filesystem::path(app_local) / "external-content.txt");
-        if (choice) std::getline(choice, external);
-        if (!external.empty() && external.back() == '\r') external.pop_back();
+        const auto stable_choice = std::filesystem::path(local) / "external-content.txt";
+        const auto app_choice = std::filesystem::path(app_local) / "external-content.txt";
+        std::string external = read_choice(stable_choice);
+        if (external.empty()) external = read_choice(app_choice);
         bool configured = PortUwp_ConfigureStorage(local.c_str(), external.c_str()) != 0;
         PortUwp_Trace(configured ? "Prepared content found" : PortUwp_StorageError());
+        if (!configured && xbox) {
+            try {
+                for (const auto &drive : removable_roots()) {
+                    const auto candidate = (std::filesystem::path(drive) / "BT4").string();
+                    if (PortUwp_ConfigureStorage(local.c_str(), candidate.c_str())) {
+                        external = candidate;
+                        configured = true;
+                        PortUwp_Trace(("Found external BT4 content: " + candidate).c_str());
+                        break;
+                    }
+                }
+            } catch (...) { PortUwp_Trace("Could not enumerate external drives"); }
+        }
         if (!configured) {
             PortUwp_Trace("Opening BT4 ISO setup");
             std::string installed;
@@ -31,10 +79,11 @@ extern "C" int PortUwp_InitStorage(void) {
             }
             external = installed == local ? std::string() : installed;
             configured = PortUwp_ConfigureStorage(local.c_str(), external.c_str()) != 0;
-            if (configured) {
-                std::ofstream saved(std::filesystem::path(app_local) / "external-content.txt", std::ios::trunc);
-                if (saved) saved << external << '\n';
-            }
+        }
+        if (configured) {
+            if (local == PortUwp_ContentPath()) external.clear();
+            save_choice(stable_choice, external);
+            save_choice(app_choice, external);
         }
         const bool applied = configured && PortUwp_ApplyStorageEnvironment() != 0;
         if (applied) PortUwp_Trace((std::string("Content root: ") + PortUwp_ContentPath()).c_str());
